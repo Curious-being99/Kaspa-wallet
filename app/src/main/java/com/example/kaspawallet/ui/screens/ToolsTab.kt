@@ -416,17 +416,12 @@ fun ToolsTab(
                 val outputsCount = massRecipients.size + 1 // recipients + change output
                 val inputsCount = 1
                 val transactionMass = com.example.kaspawallet.data.crypto.KaspaSigner.calculateTransactionMass(inputsCount, outputsCount)
-                
-                // Base fees for mass transaction (per output + base fee)
-                val baseFeeLow = (massRecipients.size * 1000L) + KaspaUtils.DEFAULT_MIN_FEE_SOMPI
-                val baseFeeNormal = (massRecipients.size * 1000L) + KaspaUtils.PRIORITY_FEE_SOMPI
-                val baseFeePriority = (massRecipients.size * 1000L) + KaspaUtils.HIGH_PRIORITY_FEE_SOMPI
-
-                val estimatedFeeLow = maxOf(com.example.kaspawallet.data.crypto.KaspaSigner.calculateMinimumFeeSompi(transactionMass, 1.0), baseFeeLow)
-                val estimatedFeeNormal = maxOf(com.example.kaspawallet.data.crypto.KaspaSigner.calculateMinimumFeeSompi(transactionMass, 1.1), baseFeeNormal)
-                val estimatedFeePriority = maxOf(com.example.kaspawallet.data.crypto.KaspaSigner.calculateMinimumFeeSompi(transactionMass, 1.5), baseFeePriority)
-                
-                val totalDebitKas = totalAmountKas + KaspaUtils.sompiToKas(estimatedFeeNormal)
+                val estimatedFeeSompi = maxOf(
+                    com.example.kaspawallet.data.crypto.KaspaSigner.calculateMinimumFeeSompi(transactionMass),
+                    (massRecipients.size * 10000L) + KaspaUtils.PRIORITY_FEE_SOMPI
+                )
+                val estimatedFeeKas = KaspaUtils.sompiToKas(estimatedFeeSompi)
+                val totalDebitKas = totalAmountKas + estimatedFeeKas
                 val availableBalanceKas = state.activeAccount?.let { KaspaUtils.sompiToKas(it.balanceSompi) } ?: 0.0
 
                 LazyColumn(
@@ -551,12 +546,8 @@ fun ToolsTab(
                                     Text("${KaspaUtils.formatKas(totalAmountKas)} KAS", color = KaspaPrimaryGlow, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 }
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Column {
-                                        Text("Estimated Network Fees:", color = KaspaTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                        Text("• Low (0.00386 base): ${KaspaUtils.formatKas(KaspaUtils.sompiToKas(estimatedFeeLow))} KAS", color = KaspaTextMuted, fontSize = 11.sp)
-                                        Text("• Normal (0.00400 base): ${KaspaUtils.formatKas(KaspaUtils.sompiToKas(estimatedFeeNormal))} KAS", color = KaspaTextMuted, fontSize = 11.sp)
-                                        Text("• Priority (0.00486 base): ${KaspaUtils.formatKas(KaspaUtils.sompiToKas(estimatedFeePriority))} KAS", color = KaspaTextMuted, fontSize = 11.sp)
-                                    }
+                                    Text("Estimated Network Fee:", color = KaspaTextSecondary, fontSize = 13.sp)
+                                    Text("${KaspaUtils.formatKas(estimatedFeeKas)} KAS", color = KaspaTextPrimary, fontSize = 13.sp)
                                 }
                                 HorizontalDivider(color = KaspaCardBorder, modifier = Modifier.padding(vertical = 4.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

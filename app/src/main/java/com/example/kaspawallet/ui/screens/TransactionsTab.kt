@@ -36,7 +36,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun TransactionsTab(state: WalletUiState, onRefresh: () -> Unit = {}) {
+fun TransactionsTab(state: WalletUiState) {
     val context = LocalContext.current
     var selectedFilter by remember { mutableStateOf<TransactionType?>(null) }
     var searchQuery by remember { mutableStateOf("") }
@@ -158,19 +158,15 @@ fun TransactionsTab(state: WalletUiState, onRefresh: () -> Unit = {}) {
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("No transactions found", color = KaspaTextSecondary, fontSize = 16.sp)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    TextButton(onClick = onRefresh) {
-                        Text("Refresh History", color = KaspaPrimary)
-                    }
                 }
             }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 80.dp)
+                contentPadding = PaddingValues(bottom = 24.dp)
             ) {
-                items(filteredTransactions, key = { it.id }) { tx ->
+                items(filteredTransactions) { tx ->
                     val isIncoming = tx.txType == TransactionType.RECEIVE
                     val isCompound = tx.txType == TransactionType.COMPOUND
                     val isTransfer = tx.txType == TransactionType.TRANSFER

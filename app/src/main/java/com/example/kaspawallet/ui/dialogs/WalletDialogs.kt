@@ -42,12 +42,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.fragment.app.FragmentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
-import com.example.kaspawallet.ui.components.QrScannerView
 import com.example.kaspawallet.data.crypto.KaspaCrypto
 import com.example.kaspawallet.data.security.BiometricAuthManager
 import com.example.kaspawallet.data.crypto.KaspaSigner
@@ -79,16 +73,6 @@ fun SendKasDialog(
     var showContactPicker by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showAuthPasswordDialog by remember { mutableStateOf(false) }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            showQrScanner = true
-        } else {
-            Toast.makeText(context, "Camera permission required to scan QR code", Toast.LENGTH_SHORT).show()
-        }
-    }
     var authInput by remember { mutableStateOf("") }
     var isAuthInputVisible by remember { mutableStateOf(false) }
 
@@ -309,16 +293,7 @@ fun SendKasDialog(
                     ),
                     trailingIcon = {
                         Row {
-                            IconButton(onClick = {
-                                when (PackageManager.PERMISSION_GRANTED) {
-                                    ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) -> {
-                                        showQrScanner = true
-                                    }
-                                    else -> {
-                                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                    }
-                                }
-                            }) {
+                            IconButton(onClick = { showQrScanner = true }) {
                                 Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan QR", tint = KaspaPrimary)
                             }
                             if (contacts.isNotEmpty()) {
@@ -620,35 +595,72 @@ fun SendKasDialog(
     }
 
     if (showQrScanner) {
-        Dialog(
+        AlertDialog(
             onDismissRequest = { showQrScanner = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-                QrScannerView(
-                    onResult = { result ->
-                        // Kaspa URIs often look like kaspa:address?amount=...
-                        val cleanAddress = if (result.contains(":")) {
-                            result.split(":").last().split("?").first()
-                        } else {
-                            result
-                        }
-                        recipientAddress = cleanAddress
-                        showQrScanner = false
-                        Toast.makeText(context, "QR Scanned Successfully", Toast.LENGTH_SHORT).show()
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-                
-                // Back Button
-                IconButton(
-                    onClick = { showQrScanner = false },
-                    modifier = Modifier.statusBarsPadding().padding(16.dp)
-                ) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = KaspaPrimary)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Scan Kaspa QR Code", color = KaspaTextPrimary, fontWeight = FontWeight.Bold)
                 }
-            }
-        }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(200.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(KaspaSurfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator(color = KaspaPrimary, strokeWidth = 3.dp)
+                            Text("Camera Viewfinder Active...", color = KaspaTextSecondary, fontSize = 12.sp)
+                        }
+                    }
+                    Text(
+                        "Align Kaspa address QR code within the frame, or select a sample address below to simulate a scan.",
+                        color = KaspaTextSecondary,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                recipientAddress = "kaspa:qp8l8xy3h967q94z48yv6z2g48q32z7y72g48q32z7"
+                                showQrScanner = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = KaspaPrimary)
+                        ) {
+                            Text("Simulate Scan: Testnet Address", fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                recipientAddress = "kaspa:qq8l8xy3h967q94z48yv6z2g48q32z7y72g48q32z7q"
+                                showQrScanner = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = KaspaPrimary)
+                        ) {
+                            Text("Simulate Scan: Mainnet Address", fontSize = 12.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showQrScanner = false }) {
+                    Text("Cancel", color = KaspaTextSecondary)
+                }
+            },
+            containerColor = KaspaSurface
+        )
     }
 }
 
