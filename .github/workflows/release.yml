@@ -50,8 +50,8 @@ jobs:
       - name: Check Keystore Secrets Availability
         id: check_secrets
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
@@ -70,37 +70,37 @@ jobs:
       - name: Sign APK (if keystore available)
         if: env.HAS_KEYSTORE == 'true'
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           echo "Decoding Keystore..."
-          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+          echo -n "$KEYSTORE_BASE64" | base64 -d > release.keystore
           
-          # Find apksigner inside the Android SDK build-tools
-          APKSIGNER_PATH=$(find $ANDROID_HOME/build-tools -name apksigner | sort -r | head -n 1)
-          if [ -z "$APKSIGNER_PATH" ]; then
-            echo "Error: apksigner not found!"
-            exit 1
-          fi
-          echo "Using apksigner at $APKSIGNER_PATH"
+          # Find zipalign and apksigner inside the Android SDK build-tools
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -r | head -1)
+          ZIPALIGN_PATH="$BUILD_TOOLS_DIR/zipalign"
+          APKSIGNER_PATH="$BUILD_TOOLS_DIR/apksigner"
+          
+          echo "Zipaligning APK..."
+          $ZIPALIGN_PATH -v -p 4 "kascrypt unsigned.apk" "kascrypt-aligned.apk"
           
           echo "Signing APK..."
           $APKSIGNER_PATH sign --ks release.keystore \
             --ks-key-alias "$KEYSTORE_ALIAS" \
             --ks-pass env:KEYSTORE_PASSWORD \
             --key-pass env:KEY_PASSWORD \
-            --out "release-artifacts/kascrypt release.apk" \
-            "kascrypt unsigned.apk"
+            --out "release-artifacts/KasCrypt-Signed-Release.apk" \
+            "kascrypt-aligned.apk"
           
-          echo "Successfully signed and generated release-artifacts/kascrypt release.apk"
+          echo "Successfully signed and generated release-artifacts/KasCrypt-Signed-Release.apk"
 
       - name: Prepare Unsigned Release Name (if keystore NOT available)
         if: env.HAS_KEYSTORE != 'true'
         run: |
-          cp "kascrypt unsigned.apk" "release-artifacts/kascrypt unsigned release.apk"
-          echo "Keystore not available, renamed to release-artifacts/kascrypt unsigned release.apk"
+          cp "kascrypt unsigned.apk" "release-artifacts/KasCrypt-Unsigned-Release.apk"
+          echo "Keystore not available, outputting KasCrypt-Unsigned-Release.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
