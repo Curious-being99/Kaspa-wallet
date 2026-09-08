@@ -307,7 +307,7 @@ class KaspaViewModel(private val repository: KaspaWalletRepository) : ViewModel(
         recipientAddress: String,
         amountKas: Double,
         feeOption: String,
-        customFeeKas: Double = 0.0001,
+        customFeeKas: Double = 0.00386,
         note: String = "",
         manualUtxos: List<UtxoEntry>? = null
     ) {

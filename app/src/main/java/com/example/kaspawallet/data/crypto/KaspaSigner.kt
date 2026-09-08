@@ -429,7 +429,7 @@ object KaspaSigner {
      */
     fun calculateMinimumFeeSompi(mass: Long, feeRateSompiPerGram: Double = 1.0): Long {
         val calculatedFee = (mass * feeRateSompiPerGram).toLong()
-        return maxOf(calculatedFee, 10_000L) // Minimum 10,000 Sompi (0.0001 KAS)
+        return maxOf(calculatedFee, 386_000L) // Minimum 386,000 Sompi (0.00386 KAS)
     }
 
     private fun calculateTransactionId(rawJson: String): String {

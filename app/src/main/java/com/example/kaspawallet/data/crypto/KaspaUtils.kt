@@ -6,9 +6,9 @@ import java.text.DecimalFormat
 
 object KaspaUtils {
     const val SOMPI_PER_KAS = 100_000_000L // 10^8 sompi = 1 KAS
-    const val DEFAULT_MIN_FEE_SOMPI = 10_000L // 0.0001 KAS
-    const val PRIORITY_FEE_SOMPI = 50_000L // 0.0005 KAS
-    const val HIGH_PRIORITY_FEE_SOMPI = 150_000L // 0.0015 KAS
+    const val DEFAULT_MIN_FEE_SOMPI = 386_000L // 0.00386 KAS
+    const val PRIORITY_FEE_SOMPI = 400_000L // 0.00400 KAS
+    const val HIGH_PRIORITY_FEE_SOMPI = 486_000L // 0.00486 KAS
 
     fun generateMnemonic(wordCount: Int = 12): List<String> {
         return Bip39WordList.generateMnemonic(wordCount)
