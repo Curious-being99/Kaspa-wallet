@@ -198,13 +198,14 @@ fun WalletSetupWizard(
 
                 when (currentStep) {
                     // ==========================================
-                    // STEP 1: CONFIGURATION & SECURITY (NO SCROLL)
+                    // STEP 1: CONFIGURATION & SECURITY
                     // ==========================================
                     SetupStep.CONFIG -> {
                         Column(
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxWidth(),
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             // Wallet Name

@@ -471,6 +471,8 @@ fun SendKasDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Broadcast Transaction", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
+
+                Spacer(modifier = Modifier.height(40.dp))
             }
         }
     }

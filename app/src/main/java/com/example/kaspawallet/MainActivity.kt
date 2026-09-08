@@ -18,7 +18,10 @@ import kotlinx.coroutines.launch
 import com.example.kaspawallet.data.security.BiometricAuthManager
 import com.example.kaspawallet.ui.KaspaViewModel
 import com.example.kaspawallet.ui.KaspaViewModelFactory
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.example.kaspawallet.ui.screens.MainScreen
+import com.example.kaspawallet.ui.screens.SplashScreen
 import com.example.kaspawallet.ui.screens.WalletSetupWizard
 import com.example.kaspawallet.ui.screens.WalletUnlockScreen
 import com.example.kaspawallet.ui.screens.WelcomeScreen
@@ -97,6 +100,7 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             KaspaWalletTheme {
+                var showSplash by androidx.compose.runtime.remember { mutableStateOf(true) }
                 val state by viewModel.uiState.collectAsState()
 
                 Surface(
@@ -105,7 +109,11 @@ class MainActivity : FragmentActivity() {
                 ) {
                     val hasWallet = state.wallets.isNotEmpty() || state.activeWallet != null
 
-                    if (!hasWallet && !state.showSetupWizard) {
+                    if (showSplash) {
+                        SplashScreen(
+                            onSplashFinished = { showSplash = false }
+                        )
+                    } else if (!hasWallet && !state.showSetupWizard) {
                         WelcomeScreen(
                             viewModel = viewModel,
                             onCreateWallet = { viewModel.startSetupWizard("CREATE") },

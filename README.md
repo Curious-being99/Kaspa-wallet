@@ -1,7 +1,7 @@
-# Kaspa Android Wallet
+# KASCRYPT - Kaspa Wallet
 
 ## Description
-Kaspa Android Wallet is a secure, open-source, non-custodial mobile wallet for the Kaspa (KAS) network. Built natively for Android using Kotlin and Jetpack Compose, it empowers users to safely manage their Kaspa assets, create or import 24-word seed phrases, and execute transactions directly on the Kaspa blockDAG. 
+**KASCRYPT** is a secure, open-source, non-custodial mobile wallet for the Kaspa (KAS) network. Built natively for Android using Kotlin and Jetpack Compose, it empowers users to safely manage their Kaspa assets, create or import 24-word seed phrases, and execute transactions directly on the Kaspa blockDAG. 
 
 ## Features & Functions
 * **Non-Custodial Asset Management:** Your private keys are derived locally and never leave your device. You retain absolute control over your funds.
