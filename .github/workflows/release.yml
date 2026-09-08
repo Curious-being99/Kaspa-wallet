@@ -88,6 +88,7 @@ jobs:
           
           echo "Signing APK..."
           $APKSIGNER_PATH sign --ks release.keystore \
+            --v4-signing-enabled false \
             --ks-key-alias "$KEYSTORE_ALIAS" \
             --ks-pass env:KEYSTORE_PASSWORD \
             --key-pass env:KEY_PASSWORD \
@@ -106,13 +107,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: KasCrypt-APK
-          path: release-artifacts/*
+          path: release-artifacts/*.apk
 
       - name: Publish Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: KasCrypt Build ${{ github.run_number }}
-          files: release-artifacts/*
+          files: release-artifacts/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

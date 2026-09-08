@@ -49,27 +49,12 @@ fun WelcomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Subtle Radial Aura behind the Kaspa Teal Chevron
-            Box(
-                modifier = Modifier
-                    .size(130.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                KaspaPrimary.copy(alpha = 0.22f),
-                                Color.Transparent
-                            )
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.ic_kaspa_teal_logo),
-                    contentDescription = "KASCRYPT Logo",
-                    modifier = Modifier.size(92.dp)
-                )
-            }
+            // Official Kaspa Teal >> Chevron Logo
+            Image(
+                painter = painterResource(id = R.drawable.ic_kaspa_teal_logo),
+                contentDescription = "KASCRYPT Logo",
+                modifier = Modifier.size(92.dp)
+            )
 
             Spacer(modifier = Modifier.height(28.dp))
 
