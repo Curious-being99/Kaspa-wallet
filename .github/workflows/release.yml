@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '21'
@@ -50,13 +50,19 @@ jobs:
 
       - name: Check Keystore Secrets Availability
         id: check_secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ] && [ -n "${{ secrets.KEYSTORE_ALIAS }}" ] && [ -n "${{ secrets.KEYSTORE_PASSWORD }}" ] && [ -n "${{ secrets.KEY_PASSWORD }}" ]; then
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_ALIAS" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
             echo "HAS_KEYSTORE=true" >> $GITHUB_ENV
             echo "Keystore secrets are fully available."
           else
             echo "HAS_KEYSTORE=false" >> $GITHUB_ENV
             echo "Keystore secrets are NOT available."
+            echo "Debug Info (Lengths): BASE64=${#KEYSTORE_BASE64}, ALIAS=${#KEYSTORE_ALIAS}, KSTORE_PASS=${#KEYSTORE_PASSWORD}, KEY_PASS=${#KEY_PASSWORD}"
           fi
 
       - name: Create Artifacts Directory
@@ -64,9 +70,14 @@ jobs:
 
       - name: Sign APK (if keystore available)
         if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           echo "Decoding Keystore..."
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
           
           # Find apksigner inside the Android SDK build-tools
           APKSIGNER_PATH=$(find $ANDROID_HOME/build-tools -name apksigner | sort -r | head -n 1)
@@ -78,9 +89,9 @@ jobs:
           
           echo "Signing APK..."
           $APKSIGNER_PATH sign --ks release.keystore \
-            --ks-key-alias "${{ secrets.KEYSTORE_ALIAS }}" \
-            --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
-            --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
+            --ks-key-alias "$KEYSTORE_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --key-pass env:KEY_PASSWORD \
             --out "release-artifacts/kascrypt release.apk" \
             "kascrypt unsigned.apk"
           
@@ -92,10 +103,17 @@ jobs:
           cp "kascrypt unsigned.apk" "release-artifacts/kascrypt unsigned release.apk"
           echo "Keystore not available, renamed to release-artifacts/kascrypt unsigned release.apk"
 
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KasCrypt-APK
+          path: release-artifacts/*
+
       - name: Publish Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: build-${{ github.run_number }}
+          name: KasCrypt Build ${{ github.run_number }}
           files: release-artifacts/*
-          fail_on_unsupported_ghost_writer: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
