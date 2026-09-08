@@ -52,9 +52,10 @@ data class WalletUiState(
 )
 
 class KaspaViewModel(private val repository: KaspaWalletRepository) : ViewModel() {
-
     private val _uiState = MutableStateFlow(WalletUiState())
     val uiState: StateFlow<WalletUiState> = _uiState.asStateFlow()
+
+    private var isInitialWalletLoad = true
 
     init {
         // Collect wallets
@@ -66,9 +67,14 @@ class KaspaViewModel(private val repository: KaspaWalletRepository) : ViewModel(
                     } else {
                         walletList.firstOrNull()
                     }
+                    val shouldLock = isInitialWalletLoad && walletList.isNotEmpty()
+                    if (isInitialWalletLoad) {
+                        isInitialWalletLoad = false
+                    }
                     current.copy(
                         wallets = walletList,
-                        activeWallet = active
+                        activeWallet = active,
+                        isWalletLocked = if (shouldLock) true else current.isWalletLocked
                     )
                 }
                 _uiState.value.activeWallet?.let {
