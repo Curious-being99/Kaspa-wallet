@@ -361,11 +361,18 @@ class KaspaWalletRepository(
             status = TransactionStatus.PENDING,
             note = note
         )
-        database.transactionDao().insertTransaction(tx)
-
         // Broadcast cryptographically signed transaction to Kaspa network
         val (broadcastSuccess, responseMsg) = apiClient.broadcastTransaction(signedTxJson, _currentNetwork.value)
         Log.i("KaspaWalletRepository", "Broadcast result: $broadcastSuccess ($responseMsg)")
+
+        // Use the real TxID from the network if broadcast was successful to ensure local history matches network history
+        val finalTxId = if (broadcastSuccess && responseMsg.length >= 32) responseMsg else txId
+        
+        val finalTx = tx.copy(
+            id = finalTxId,
+            status = if (broadcastSuccess) TransactionStatus.PENDING else TransactionStatus.FAILED
+        )
+        database.transactionDao().insertTransaction(finalTx)
 
         // Re-sync on-chain balance after broadcast
         repositoryScope.launch {
@@ -373,7 +380,7 @@ class KaspaWalletRepository(
             syncAccountOnChain(senderAccount.id)
         }
 
-        tx
+        finalTx
     }
 
     suspend fun transferBetweenAccounts(
@@ -478,17 +485,26 @@ class KaspaWalletRepository(
             recipientAddress = account.address,
             timestamp = System.currentTimeMillis(),
             daaScore = currentDaa,
-            status = TransactionStatus.CONFIRMED,
+            status = TransactionStatus.PENDING,
             note = "Consolidated ${utxosToCompound.size} UTXOs • Mass: $mass grams"
         )
-        database.transactionDao().insertTransaction(tx)
 
         if (signedTxJson.isNotEmpty()) {
             val (broadcastSuccess, responseMsg) = apiClient.broadcastTransaction(signedTxJson, _currentNetwork.value)
             Log.i("KaspaWalletRepository", "Compound broadcast result: $broadcastSuccess ($responseMsg)")
+            
+            // Use real TxID from network
+            val finalTxId = if (broadcastSuccess && responseMsg.length >= 32) responseMsg else txId
+            val finalTx = tx.copy(
+                id = finalTxId,
+                status = if (broadcastSuccess) TransactionStatus.PENDING else TransactionStatus.FAILED
+            )
+            database.transactionDao().insertTransaction(finalTx)
+            finalTx
+        } else {
+            database.transactionDao().insertTransaction(tx)
+            tx
         }
-
-        tx
     }
 
     suspend fun addContact(name: String, address: String, note: String): ContactEntity = withContext(Dispatchers.IO) {

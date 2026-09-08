@@ -299,7 +299,7 @@ fun MainScreen(
             Box(modifier = Modifier.weight(1f)) {
                 when (state.selectedTab) {
                     MainTab.OVERVIEW -> OverviewTab(state = state, viewModel = viewModel)
-                    MainTab.TRANSACTIONS -> TransactionsTab(state = state)
+                    MainTab.TRANSACTIONS -> TransactionsTab(state = state, onRefresh = { viewModel.refreshAll() })
                     MainTab.BLOCKDAG -> BlockDagTab(state = state, viewModel = viewModel)
                     MainTab.TOOLS -> ToolsTab(state = state, viewModel = viewModel)
                     MainTab.SETTINGS -> SettingsTab(state = state, viewModel = viewModel)
