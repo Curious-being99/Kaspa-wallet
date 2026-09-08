@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -418,7 +419,7 @@ fun SendKasDialog(
                             Text("Network Fee:", color = KaspaTextSecondary, fontSize = 13.sp)
                             Text(KaspaUtils.formatKas(feeKas), color = KaspaTextSecondary, fontSize = 13.sp)
                         }
-                        Divider(color = KaspaCardBorder, modifier = Modifier.padding(vertical = 4.dp))
+                        HorizontalDivider(color = KaspaCardBorder, modifier = Modifier.padding(vertical = 4.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Total Debit:", color = KaspaTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             Text(KaspaUtils.formatKas(totalDebitKas), color = KaspaPrimaryGlow, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -466,7 +467,7 @@ fun SendKasDialog(
                         disabledContentColor = KaspaTextMuted
                     )
                 ) {
-                    Icon(Icons.Default.Send, contentDescription = null)
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Broadcast Transaction", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
@@ -1883,7 +1884,7 @@ fun TransactionSuccessDialog(
                     textAlign = TextAlign.Center
                 )
 
-                Divider(color = KaspaCardBorder)
+                HorizontalDivider(color = KaspaCardBorder)
 
                 // Details Card
                 Card(
@@ -1995,7 +1996,7 @@ fun TransactionSuccessDialog(
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, KaspaPrimary)
                 ) {
-                    Icon(Icons.Default.OpenInNew, contentDescription = null, tint = KaspaPrimary, modifier = Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, tint = KaspaPrimary, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("View on Kaspa Explorer", color = KaspaPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
