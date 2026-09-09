@@ -28,35 +28,81 @@ class KaspaApiClient {
         }
         .build()
 
+    @Volatile
+    var customEndpoint: String? = null
+
     private fun getBaseUrl(network: KaspaNetwork): String {
+        val custom = customEndpoint?.trim()
+        if (!custom.isNullOrEmpty()) {
+            return custom.trimEnd('/')
+        }
         return when (network) {
             KaspaNetwork.MAINNET -> "https://api.kaspa.org"
             KaspaNetwork.TESTNET_10 -> "https://api-tn10.kaspa.org"
             KaspaNetwork.TESTNET_11 -> "https://api-tn11.kaspa.org"
-            KaspaNetwork.DEVNET -> "https://api-devnet.kaspa.org"
-            KaspaNetwork.SIMNET -> "https://api-simnet.kaspa.org"
+            KaspaNetwork.DEVNET -> "http://10.0.2.2:16210"
+            KaspaNetwork.SIMNET -> "http://10.0.2.2:16510"
         }
+    }
+
+    private fun getCandidateBaseUrls(network: KaspaNetwork): List<String> {
+        val candidates = mutableListOf<String>()
+        val custom = customEndpoint?.trim()
+        if (!custom.isNullOrEmpty()) {
+            candidates.add(custom.trimEnd('/'))
+        }
+        when (network) {
+            KaspaNetwork.MAINNET -> {
+                candidates.add("https://api.kaspa.org")
+            }
+            KaspaNetwork.TESTNET_10 -> {
+                candidates.add("https://api-tn10.kaspa.org")
+            }
+            KaspaNetwork.TESTNET_11 -> {
+                candidates.add("https://api-tn11.kaspa.org")
+            }
+            KaspaNetwork.DEVNET -> {
+                candidates.add("http://10.0.2.2:16210")
+                candidates.add("http://127.0.0.1:16210")
+            }
+            KaspaNetwork.SIMNET -> {
+                candidates.add("http://10.0.2.2:16510")
+                candidates.add("http://127.0.0.1:16510")
+            }
+        }
+        return candidates.distinct()
     }
 
     suspend fun fetchBlockDagInfo(network: KaspaNetwork): BlockDagInfo = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
-        val baseUrl = getBaseUrl(network)
-        try {
-            val request = Request.Builder()
-                .url("$baseUrl/info/blockdag")
-                .get()
-                .build()
+        val candidateUrls = getCandidateBaseUrls(network)
+        var lastErrMessage: String? = null
 
-            client.newCall(request).execute().use { response ->
-                val latency = System.currentTimeMillis() - startTime
-                if (response.isSuccessful) {
-                    val bodyStr = response.body?.string() ?: ""
+        for (baseUrl in candidateUrls) {
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/info/blockdag")
+                    .get()
+                    .build()
+
+                var bodyStr = ""
+                var isSuccess = false
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        bodyStr = response.body?.string() ?: ""
+                        isSuccess = true
+                    }
+                }
+
+                if (isSuccess && bodyStr.isNotEmpty()) {
+                    val latency = System.currentTimeMillis() - startTime
                     val json = JSONObject(bodyStr)
                     val networkName = json.optString("networkName", network.displayName)
                     val blockCount = json.optLong("blockCount", json.optString("blockCount", "0").toLongOrNull() ?: 0L)
                     val difficulty = json.optDouble("difficulty", 0.0)
                     val virtualDaaScore = json.optLong("virtualDaaScore", json.optString("virtualDaaScore", "0").toLongOrNull() ?: 0L)
-                    
+
                     val tipHashesList = mutableListOf<String>()
                     val tipHashesArray = json.optJSONArray("tipHashes")
                     if (tipHashesArray != null) {
@@ -65,15 +111,17 @@ class KaspaApiClient {
                         }
                     }
 
-                    // Also fetch live hashrate & peer info
-                    val hashrate = fetchHashrate(network)
-                    val nodeStatus = fetchLiveNodeStatus(network)
-                    val reward = fetchCurrentReward(network, virtualDaaScore)
+                    // Query secondary metrics independently so they never fail the main BlockDAG metrics
+                    val hashrate = fetchHashrate(baseUrl)
+                    val nodeStatus = fetchLiveNodeStatus(baseUrl)
+                    val reward = fetchCurrentReward(baseUrl, virtualDaaScore)
 
-                    BlockDagInfo(
+                    return@withContext BlockDagInfo(
                         networkName = networkName,
                         blockCount = blockCount,
-                        difficulty = difficulty / 1e15, // convert to P
+                        headerCount = json.optLong("headerCount", blockCount),
+                        difficulty = if (difficulty > 0) difficulty / 1e15 else 0.0,
+                        pastMedianTime = json.optLong("pastMedianTime", System.currentTimeMillis()),
                         virtualDaaScore = virtualDaaScore,
                         hashratePhPerSec = hashrate,
                         currentRewardKas = reward,
@@ -82,19 +130,21 @@ class KaspaApiClient {
                         nodeLatencyMs = latency,
                         nodeVersion = nodeStatus.nodeVersion
                     )
-                } else {
-                    BlockDagInfo(nodeLatencyMs = latency)
                 }
+            } catch (e: Exception) {
+                lastErrMessage = e.localizedMessage ?: e.message
             }
-        } catch (e: Exception) {
-            Log.e("KaspaApiClient", "Error fetching BlockDAG info", e)
-            BlockDagInfo()
         }
+
+        Log.w("KaspaApiClient", "BlockDAG info fetch unfulfilled on ${network.displayName}: $lastErrMessage")
+        BlockDagInfo(
+            networkName = network.displayName,
+            nodeLatencyMs = System.currentTimeMillis() - startTime
+        )
     }
 
-    private fun fetchHashrate(network: KaspaNetwork): Double {
+    private fun fetchHashrate(baseUrl: String): Double {
         return try {
-            val baseUrl = getBaseUrl(network)
             val request = Request.Builder()
                 .url("$baseUrl/info/hashrate")
                 .get()
@@ -110,7 +160,7 @@ class KaspaApiClient {
                     1240.5
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             1240.5
         }
     }
@@ -121,31 +171,12 @@ class KaspaApiClient {
         val isSynced: Boolean
     )
 
-    private fun fetchLiveNodeStatus(network: KaspaNetwork): LiveNodeStatus {
-        val baseUrl = getBaseUrl(network)
+    private fun fetchLiveNodeStatus(baseUrl: String): LiveNodeStatus {
         var peers = 0
         var version = "v2.0.1 (Rusty Kaspa)"
         var synced = false
 
-        // 1. Query /info/peers or /info/p2p
-        try {
-            val reqPeers = Request.Builder().url("$baseUrl/info/peers").get().build()
-            client.newCall(reqPeers).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string()?.trim() ?: ""
-                    if (body.startsWith("[")) {
-                        peers = JSONArray(body).length()
-                    } else if (body.startsWith("{")) {
-                        val json = JSONObject(body)
-                        peers = json.optInt("peerCount", json.optInt("connectedPeers", json.optJSONArray("peers")?.length() ?: 0))
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.d("KaspaApiClient", "info/peers endpoint check: ${e.message}")
-        }
-
-        // 2. Query /info/health for cluster node servers & status
+        // 1. Query /info/health for cluster node servers & status
         try {
             val reqHealth = Request.Builder().url("$baseUrl/info/health").get().build()
             client.newCall(reqHealth).execute().use { resp ->
@@ -154,14 +185,12 @@ class KaspaApiClient {
                     val json = JSONObject(body)
                     val serversArray = json.optJSONArray("kaspadServers")
                     if (serversArray != null && serversArray.length() > 0) {
-                        if (peers == 0) {
-                            var activeCount = 0
-                            for (i in 0 until serversArray.length()) {
-                                val s = serversArray.getJSONObject(i)
-                                if (s.optBoolean("isSynced", false)) activeCount++
-                            }
-                            peers = if (activeCount > 0) activeCount else serversArray.length()
+                        var activeCount = 0
+                        for (i in 0 until serversArray.length()) {
+                            val s = serversArray.getJSONObject(i)
+                            if (s.optBoolean("isSynced", false)) activeCount++
                         }
+                        peers = if (activeCount > 0) activeCount else serversArray.length()
                         val firstServer = serversArray.getJSONObject(0)
                         val ver = firstServer.optString("serverVersion", "")
                         if (ver.isNotEmpty()) {
@@ -171,11 +200,10 @@ class KaspaApiClient {
                     }
                 }
             }
-        } catch (e: Exception) {
-            Log.d("KaspaApiClient", "info/health fetch error: ${e.message}")
+        } catch (_: Exception) {
         }
 
-        // 3. Query /info/kaspad for version & sync state fallback
+        // 2. Query /info/kaspad for version & sync state fallback
         if (!synced || peers == 0) {
             try {
                 val reqKaspad = Request.Builder().url("$baseUrl/info/kaspad").get().build()
@@ -193,17 +221,15 @@ class KaspaApiClient {
                         }
                     }
                 }
-            } catch (e: Exception) {
-                Log.d("KaspaApiClient", "info/kaspad fetch error: ${e.message}")
+            } catch (_: Exception) {
             }
         }
 
         return LiveNodeStatus(connectedPeers = peers, nodeVersion = version, isSynced = synced)
     }
 
-    private fun fetchCurrentReward(network: KaspaNetwork, virtualDaaScore: Long): Double {
+    private fun fetchCurrentReward(baseUrl: String, virtualDaaScore: Long): Double {
         return try {
-            val baseUrl = getBaseUrl(network)
             val request = Request.Builder()
                 .url("$baseUrl/info/blockreward")
                 .get()
@@ -222,7 +248,7 @@ class KaspaApiClient {
                     1.85
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             1.85
         }
     }
@@ -434,7 +460,7 @@ class KaspaApiClient {
                 }
             }
         } catch (e: Exception) {
-            Log.e("KaspaApiClient", "Error fetching address balance for $address: ${e.message}", e)
+            Log.w("KaspaApiClient", "Address balance check unfulfilled for $address: ${e.message}")
             0L
         }
     }
@@ -484,7 +510,7 @@ class KaspaApiClient {
                 }
             }
         } catch (e: Exception) {
-            Log.e("KaspaApiClient", "Error fetching UTXOs for $address: ${e.message}", e)
+            Log.w("KaspaApiClient", "UTXOs check unfulfilled for $address: ${e.message}")
         }
         result
     }
@@ -604,7 +630,7 @@ class KaspaApiClient {
                 }
             }
         } catch (e: Exception) {
-            Log.e("KaspaApiClient", "Error fetching transactions for $address: ${e.message}", e)
+            Log.w("KaspaApiClient", "Transactions check unfulfilled for $address: ${e.message}")
         }
         result
     }

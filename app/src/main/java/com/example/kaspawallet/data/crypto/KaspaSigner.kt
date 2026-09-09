@@ -8,20 +8,23 @@ import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
-import java.security.SecureRandom
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Real Kaspa Transaction Signer matching Rusty Kaspa consensus & BIP-340 Schnorr specification.
+ * Authentic Kaspa Transaction Signer and Builder adhering strictly to Kaspa consensus:
+ * - Secp256k1 Elliptic Curve & BIP-340 Schnorr Signatures
+ * - Blake2b-256 Keyed Sighash with "TransactionSigningHash" domain separation
+ * - Blake2b-256 Keyed Transaction ID with "TransactionID" domain separation
+ * - Standard Kaspa REST & RPC JSON payload format (v0 native transactions)
  */
 object KaspaSigner {
 
-    // Secp256k1 Curve Constants
-    private val P = BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16)
-    private val N = BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BB5BF5670D9433809", 16)
-    private val GX = BigInteger("79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798", 16)
-    private val GY = BigInteger("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8", 16)
+    // Secp256k1 Curve Constants (Standards for Efficient Cryptography)
+    val P: BigInteger = BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16)
+    val N: BigInteger = BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141", 16)
+    val GX: BigInteger = BigInteger("79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798", 16)
+    val GY: BigInteger = BigInteger("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8", 16)
 
     data class ECPoint(val x: BigInteger, val y: BigInteger) {
         val isInfinity: Boolean get() = this == INFINITY
@@ -30,9 +33,9 @@ object KaspaSigner {
         }
     }
 
-    private val G = ECPoint(GX, GY)
+    val G: ECPoint = ECPoint(GX, GY)
 
-    private fun pointAdd(p1: ECPoint, p2: ECPoint): ECPoint {
+    fun pointAdd(p1: ECPoint, p2: ECPoint): ECPoint {
         if (p1.isInfinity) return p2
         if (p2.isInfinity) return p1
         if (p1.x == p2.x) {
@@ -51,7 +54,7 @@ object KaspaSigner {
         return ECPoint((rx + P).mod(P), (ry + P).mod(P))
     }
 
-    private fun scalarMultiply(k: BigInteger, p: ECPoint): ECPoint {
+    fun scalarMultiply(k: BigInteger, p: ECPoint): ECPoint {
         var n = (k.mod(N) + N).mod(N)
         var result = ECPoint.INFINITY
         var addend = p
@@ -63,6 +66,28 @@ object KaspaSigner {
             n = n.shiftRight(1)
         }
         return result
+    }
+
+    fun liftX(x: BigInteger): ECPoint? {
+        if (x >= P || x < BigInteger.ZERO) return null
+        val ySq = (x.modPow(BigInteger.valueOf(3), P) + BigInteger.valueOf(7)).mod(P)
+        val y = ySq.modPow((P + BigInteger.ONE).shiftRight(2), P)
+        if (y.modPow(BigInteger.valueOf(2), P) != ySq) return null
+        val finalY = if (!y.testBit(0)) y else P.subtract(y)
+        return ECPoint(x, finalY)
+    }
+
+    /**
+     * BIP-340 Tagged Hash: SHA256(SHA256(tag) || SHA256(tag) || msg)
+     */
+    fun taggedHash(tag: String, msg: ByteArray): ByteArray {
+        val md = MessageDigest.getInstance("SHA-256")
+        val tagHash = md.digest(tag.toByteArray(Charsets.UTF_8))
+        md.reset()
+        md.update(tagHash)
+        md.update(tagHash)
+        md.update(msg)
+        return md.digest()
     }
 
     /**
@@ -97,7 +122,6 @@ object KaspaSigner {
 
             val data: ByteArray
             if (isHardened) {
-                // Hardened: 0x00 + 32-byte private key + 4-byte big-endian index
                 data = ByteBuffer.allocate(37)
                     .order(ByteOrder.BIG_ENDIAN)
                     .put(0.toByte())
@@ -105,7 +129,6 @@ object KaspaSigner {
                     .putInt(idx)
                     .array()
             } else {
-                // Normal derivation: 33-byte compressed pubkey + 4-byte big-endian index
                 val point = scalarMultiply(masterKey, G)
                 val pubKeyHeader = if (point.y.testBit(0)) 0x03.toByte() else 0x02.toByte()
                 val compressedPub = ByteArray(33)
@@ -158,55 +181,80 @@ object KaspaSigner {
     }
 
     /**
-     * BIP-340 Schnorr Signature over 32-byte message hash
+     * Standard BIP-340 Schnorr Signature over 32-byte message hash
      */
-    fun signSchnorr(privateKeyBytes: ByteArray, messageHash: ByteArray): ByteArray {
-        var d = BigInteger(1, privateKeyBytes).mod(N)
-        val p = scalarMultiply(d, G)
+    fun signSchnorr(privateKeyBytes: ByteArray, messageHash: ByteArray, auxRand: ByteArray? = null): ByteArray {
+        val d0 = BigInteger(1, privateKeyBytes)
+        require(d0 >= BigInteger.ONE && d0 < N) { "The secret key must be an integer in the range 1..N-1" }
+        require(messageHash.size == 32) { "Message hash must be 32 bytes" }
 
-        // If P.y is odd, negate private key (X-only convention)
-        if (p.y.testBit(0)) {
-            d = N.subtract(d).mod(N)
+        val pPoint = scalarMultiply(d0, G)
+        val d = if (!pPoint.y.testBit(0)) d0 else N.subtract(d0)
+
+        val aux = auxRand ?: ByteArray(32)
+        require(aux.size == 32) { "aux_rand must be 32 bytes" }
+
+        val dBytes = to32Bytes(d)
+        val auxHash = taggedHash("BIP0340/aux", aux)
+        val t = ByteArray(32)
+        for (i in 0 until 32) {
+            t[i] = (dBytes[i].toInt() xor auxHash[i].toInt()).toByte()
         }
 
-        val pxBytes = to32Bytes(p.x)
+        val pxBytes = to32Bytes(pPoint.x)
+        val nonceInput = ByteBuffer.allocate(96)
+            .put(t)
+            .put(pxBytes)
+            .put(messageHash)
+            .array()
+        val k0 = BigInteger(1, taggedHash("BIP0340/nonce", nonceInput)).mod(N)
+        check(k0 != BigInteger.ZERO) { "Failure generating nonce k0" }
 
-        // Deterministic nonce k via RFC6979/BIP340
-        val sha256 = MessageDigest.getInstance("SHA-256")
-        sha256.update(to32Bytes(d))
-        sha256.update(messageHash)
-        val kBytes = sha256.digest()
-        var k = BigInteger(1, kBytes).mod(N)
-        if (k == BigInteger.ZERO) {
-            k = BigInteger.ONE
-        }
-
-        val rPoint = scalarMultiply(k, G)
-        if (rPoint.y.testBit(0)) {
-            k = N.subtract(k).mod(N)
-        }
+        val rPoint = scalarMultiply(k0, G)
+        val k = if (!rPoint.y.testBit(0)) k0 else N.subtract(k0)
 
         val rxBytes = to32Bytes(rPoint.x)
+        val challengeInput = ByteBuffer.allocate(96)
+            .put(rxBytes)
+            .put(pxBytes)
+            .put(messageHash)
+            .array()
+        val e = BigInteger(1, taggedHash("BIP0340/challenge", challengeInput)).mod(N)
 
-        // e = SHA256(R.x || P.x || m) mod N
-        val eDigest = MessageDigest.getInstance("SHA-256")
-        eDigest.update(rxBytes)
-        eDigest.update(pxBytes)
-        eDigest.update(messageHash)
-        val e = BigInteger(1, eDigest.digest()).mod(N)
-
-        // s = (k + e * d) mod N
         val s = (k.add(e.multiply(d))).mod(N)
         val sBytes = to32Bytes(s)
 
-        // 64-byte signature = R.x (32 bytes) || s (32 bytes)
         val signature = ByteArray(64)
         System.arraycopy(rxBytes, 0, signature, 0, 32)
         System.arraycopy(sBytes, 0, signature, 32, 32)
         return signature
     }
 
-    private fun to32Bytes(b: BigInteger): ByteArray {
+    /**
+     * Standard BIP-340 Schnorr Signature Verification
+     */
+    fun verifySchnorr(pubKeyX: ByteArray, messageHash: ByteArray, signature: ByteArray): Boolean {
+        if (pubKeyX.size != 32 || signature.size != 64 || messageHash.size != 32) return false
+        val rx = BigInteger(1, signature.copyOfRange(0, 32))
+        val s = BigInteger(1, signature.copyOfRange(32, 64))
+        val px = BigInteger(1, pubKeyX)
+        if (rx >= P || s >= N || px >= P) return false
+
+        val pPoint = liftX(px) ?: return false
+        val challengeInput = ByteBuffer.allocate(96)
+            .put(signature.copyOfRange(0, 32))
+            .put(pubKeyX)
+            .put(messageHash)
+            .array()
+        val e = BigInteger(1, taggedHash("BIP0340/challenge", challengeInput)).mod(N)
+
+        val sG = scalarMultiply(s, G)
+        val minusEP = scalarMultiply(N.subtract(e), pPoint)
+        val rPoint = pointAdd(sG, minusEP)
+        return !rPoint.isInfinity && !rPoint.y.testBit(0) && rPoint.x == rx
+    }
+
+    fun to32Bytes(b: BigInteger): ByteArray {
         val src = b.toByteArray()
         val dest = ByteArray(32)
         if (src.size >= 32) {
@@ -217,100 +265,174 @@ object KaspaSigner {
         return dest
     }
 
+    // Little-endian byte serializing helpers for Blake2b
+    private fun writeU8(b: Blake2b, value: Int) {
+        b.update((value and 0xFF).toByte())
+    }
+
+    private fun writeU16(b: Blake2b, value: Int) {
+        b.update((value and 0xFF).toByte())
+        b.update(((value ushr 8) and 0xFF).toByte())
+    }
+
+    private fun writeU32(b: Blake2b, value: Int) {
+        b.update((value and 0xFF).toByte())
+        b.update(((value ushr 8) and 0xFF).toByte())
+        b.update(((value ushr 16) and 0xFF).toByte())
+        b.update(((value ushr 24) and 0xFF).toByte())
+    }
+
+    private fun writeU64(b: Blake2b, value: Long) {
+        for (i in 0 until 8) {
+            b.update(((value ushr (i * 8)) and 0xFFL).toByte())
+        }
+    }
+
+    private fun writeVarBytes(b: Blake2b, bytes: ByteArray) {
+        writeU64(b, bytes.size.toLong())
+        b.update(bytes)
+    }
+
     /**
-     * Computes the Kaspa Transaction Sighash for a specific input index (SIGHASH_ALL = 0x01)
+     * Authentic Kaspa Consensus Sighash calculation matching Rusty Kaspa `calc_schnorr_signature_hash`.
+     * Uses Blake2b-256 keyed with "TransactionSigningHash".
      */
     fun computeKaspaSighash(
         txVersion: Int,
         inputs: List<UtxoEntry>,
-        outputs: List<Pair<Long, String>>, // amountSompi to scriptPublicKey
+        outputs: List<Pair<Long, String>>, // amountSompi to scriptPublicKey hex
         inputIndex: Int,
+        sequences: List<Long>? = null,
+        sigOpCounts: List<Int>? = null,
         lockTime: Long = 0L,
         subnetworkId: ByteArray = ByteArray(20),
         gas: Long = 0L,
         payload: ByteArray = ByteArray(0),
-        sighashType: Byte = 0x01.toByte() // SIGHASH_ALL
+        sighashType: Byte = 0x01.toByte() // SIG_HASH_ALL
     ): ByteArray {
-        val sha256 = MessageDigest.getInstance("SHA-256")
+        val seqList = sequences ?: inputs.map { 0L }
+        val sigOpsList = sigOpCounts ?: inputs.map { 1 }
 
-        // 1. Hash previous outputs (Outpoints: TxId 32 bytes + Index 4 bytes LE)
-        val prevOutputsBuffer = ByteBuffer.allocate(inputs.size * 36).order(ByteOrder.LITTLE_ENDIAN)
+        // 1. previous_outputs_hash
+        val prevOutputsHasher = Blake2b.transactionSigningHash()
         for (input in inputs) {
-            val txBytes = hexStringToByteArray(input.outpointTxId)
-            prevOutputsBuffer.put(txBytes)
-            prevOutputsBuffer.putInt(input.outpointIndex)
+            prevOutputsHasher.update(hexStringToByteArray(input.outpointTxId))
+            writeU32(prevOutputsHasher, input.outpointIndex)
         }
-        val prevOutputsHash = sha256.digest(prevOutputsBuffer.array())
+        val prevOutputsHash = prevOutputsHasher.finalize()
 
-        // 2. Hash sequences
-        val sequencesBuffer = ByteBuffer.allocate(inputs.size * 8).order(ByteOrder.LITTLE_ENDIAN)
-        for (i in inputs.indices) {
-            sequencesBuffer.putLong(0L) // sequence = 0
+        // 2. sequences_hash
+        val sequencesHasher = Blake2b.transactionSigningHash()
+        for (seq in seqList) {
+            writeU64(sequencesHasher, seq)
         }
-        val sequencesHash = sha256.digest(sequencesBuffer.array())
+        val sequencesHash = sequencesHasher.finalize()
 
-        // 3. Hash sigOpCounts (1 byte each)
-        val sigOpCountsBuffer = ByteBuffer.allocate(inputs.size)
-        for (i in inputs.indices) {
-            sigOpCountsBuffer.put(1.toByte())
+        // 3. sig_op_counts_hash (for tx.version < 1)
+        val sigOpCountsHasher = Blake2b.transactionSigningHash()
+        for (cnt in sigOpsList) {
+            writeU8(sigOpCountsHasher, cnt)
         }
-        val sigOpCountsHash = sha256.digest(sigOpCountsBuffer.array())
+        val sigOpCountsHash = sigOpCountsHasher.finalize()
 
-        // 4. Hash outputs
-        var totalOutputSize = 0
+        // 4. outputs_hash
+        val outputsHasher = Blake2b.transactionSigningHash()
         for (out in outputs) {
-            val scriptBytes = hexStringToByteArray(out.second)
-            totalOutputSize += 8 + 2 + scriptBytes.size // amount (8) + script version (2) + script
+            writeU64(outputsHasher, out.first)
+            writeU16(outputsHasher, 0) // scriptPublicKey version 0
+            writeVarBytes(outputsHasher, hexStringToByteArray(out.second))
         }
-        val outputsBuffer = ByteBuffer.allocate(totalOutputSize).order(ByteOrder.LITTLE_ENDIAN)
-        for (out in outputs) {
-            outputsBuffer.putLong(out.first)
-            outputsBuffer.putShort(0.toShort()) // script version 0
-            outputsBuffer.put(hexStringToByteArray(out.second))
+        val outputsHash = outputsHasher.finalize()
+
+        // 5. payload_hash: native subnetwork with empty payload evaluates to 32 zero bytes
+        val isNativeSubnet = subnetworkId.all { it == 0.toByte() }
+        val payloadHash = if (isNativeSubnet && payload.isEmpty()) {
+            ByteArray(32)
+        } else {
+            val payloadHasher = Blake2b.transactionSigningHash()
+            writeVarBytes(payloadHasher, payload)
+            payloadHasher.finalize()
         }
-        val outputsHash = sha256.digest(outputsBuffer.array())
 
-        // 5. Hash payload
-        val payloadHash = sha256.digest(payload)
+        // 6. Final Schnorr Sighash
+        val finalHasher = Blake2b.transactionSigningHash()
+        writeU16(finalHasher, txVersion)
+        finalHasher.update(prevOutputsHash)
+        finalHasher.update(sequencesHash)
 
-        // 6. Compute Final Input Sighash
+        if (txVersion < 1) {
+            finalHasher.update(sigOpCountsHash)
+        }
+
+        // Target input outpoint
         val targetInput = inputs[inputIndex]
-        val targetScriptBytes = hexStringToByteArray(targetInput.scriptPublicKey)
+        finalHasher.update(hexStringToByteArray(targetInput.outpointTxId))
+        writeU32(finalHasher, targetInput.outpointIndex)
 
-        val finalBuffer = ByteBuffer.allocate(
-            2 + 32 + 32 + 32 + 36 + 2 + targetScriptBytes.size + 8 + 8 + 1 + 32 + 8 + 20 + 8 + 32 + 1
-        ).order(ByteOrder.LITTLE_ENDIAN)
+        // Target scriptPublicKey
+        writeU16(finalHasher, 0) // version 0
+        writeVarBytes(finalHasher, hexStringToByteArray(targetInput.scriptPublicKey))
 
-        finalBuffer.putShort(txVersion.toShort())
-        finalBuffer.put(prevOutputsHash)
-        finalBuffer.put(sequencesHash)
-        finalBuffer.put(sigOpCountsHash)
+        // Target amount & sequence
+        writeU64(finalHasher, targetInput.amountSompi)
+        writeU64(finalHasher, seqList[inputIndex])
 
-        // Input outpoint
-        finalBuffer.put(hexStringToByteArray(targetInput.outpointTxId))
-        finalBuffer.putInt(targetInput.outpointIndex)
+        if (txVersion < 1) {
+            writeU8(finalHasher, sigOpsList[inputIndex])
+        }
 
-        // Target scriptPubKey
-        finalBuffer.putShort(0.toShort())
-        finalBuffer.put(targetScriptBytes)
+        finalHasher.update(outputsHash)
+        writeU64(finalHasher, lockTime)
+        finalHasher.update(subnetworkId)
+        writeU64(finalHasher, gas)
+        finalHasher.update(payloadHash)
+        writeU8(finalHasher, sighashType.toInt())
 
-        finalBuffer.putLong(targetInput.amountSompi)
-        finalBuffer.putLong(0L) // sequence
-        finalBuffer.put(1.toByte()) // sigOpCount
+        return finalHasher.finalize()
+    }
 
-        finalBuffer.put(outputsHash)
-        finalBuffer.putLong(lockTime)
-        finalBuffer.put(subnetworkId)
-        finalBuffer.putLong(gas)
-        finalBuffer.put(payloadHash)
-        finalBuffer.put(sighashType)
+    /**
+     * Computes the authentic Kaspa Transaction ID (TransactionID Blake2b-256 hash of tx serialization)
+     */
+    fun computeTransactionId(
+        txVersion: Int,
+        inputs: List<UtxoEntry>,
+        outputs: List<Pair<Long, String>>,
+        lockTime: Long = 0L,
+        subnetworkId: ByteArray = ByteArray(20),
+        gas: Long = 0L,
+        payload: ByteArray = ByteArray(0)
+    ): String {
+        val hasher = Blake2b.transactionIdHash()
+        writeU16(hasher, txVersion)
+        writeU64(hasher, inputs.size.toLong())
 
-        return sha256.digest(finalBuffer.array())
+        for (input in inputs) {
+            hasher.update(hexStringToByteArray(input.outpointTxId))
+            writeU32(hasher, input.outpointIndex)
+            // In v0 transaction ID preimage, signatureScript is excluded (empty var bytes: length 0)
+            writeVarBytes(hasher, ByteArray(0))
+            writeU64(hasher, 0L) // sequence
+        }
+
+        writeU64(hasher, outputs.size.toLong())
+        for (out in outputs) {
+            writeU64(hasher, out.first)
+            writeU16(hasher, 0)
+            writeVarBytes(hasher, hexStringToByteArray(out.second))
+        }
+
+        writeU64(hasher, lockTime)
+        hasher.update(subnetworkId)
+        writeU64(hasher, gas)
+        writeVarBytes(hasher, payload)
+
+        return byteArrayToHexString(hasher.finalize())
     }
 
     /**
      * Builds and cryptographically signs a complete Kaspa Transaction
-     * Returns the RPC transaction JSON string and the generated Transaction ID
+     * Returns the RPC transaction JSON string and the authentic Transaction ID
      */
     fun createAndSignTransaction(
         seed: ByteArray,
@@ -343,15 +465,17 @@ object KaspaSigner {
         val jsonInputs = JSONArray()
         for (i in inputs.indices) {
             val utxo = inputs[i]
+            // Compute real Kaspa consensus Blake2b sighash
             val sighash = computeKaspaSighash(
                 txVersion = 0,
                 inputs = inputs,
                 outputs = outputsList,
                 inputIndex = i
             )
+            // Sign with authentic BIP-340 Schnorr
             val schnorrSig = signSchnorr(privKey, sighash)
 
-            // Kaspa SignatureScript: <0x41> <64-byte Sig> <0x01 SIGHASH_ALL>
+            // Kaspa SignatureScript format: <0x41 OP_DATA_65> <64-byte Schnorr Sig> <0x01 SIGHASH_ALL>
             val sigScriptBytes = ByteArray(66)
             sigScriptBytes[0] = 0x41.toByte()
             System.arraycopy(schnorrSig, 0, sigScriptBytes, 1, 64)
@@ -393,15 +517,19 @@ object KaspaSigner {
         txInner.put("mass", consensusMass)
 
         jsonTx.put("transaction", txInner)
+        jsonTx.put("allowOrphan", false)
 
-        // Calculate transaction ID (double SHA256 of transaction components)
-        val txId = calculateTransactionId(jsonTx.toString())
+        // Calculate authentic Kaspa Transaction ID
+        val txId = computeTransactionId(
+            txVersion = 0,
+            inputs = inputs,
+            outputs = outputsList
+        )
         return Pair(jsonTx.toString(), txId)
     }
 
     /**
      * Authentic Kaspa Consensus Mass Calculation matching Rusty Kaspa & Kaspad
-     * Mass = Serialized Byte Size (1 gram/byte) + SigOps (1,000 grams/sigOp) + Script Complexity (10 grams/byte)
      */
     fun calculateTransactionMass(
         inputsCount: Int,
@@ -409,17 +537,13 @@ object KaspaSigner {
         payloadSizeBytes: Int = 0,
         sigOpsPerInput: Int = 1
     ): Long {
-        // Base transaction overhead (version 2B + numInputs 1-9B + numOutputs 1-9B + lockTime 8B + subnetwork 20B + gas 8B + payload 4B)
         val baseHeaderSize = 51L + payloadSizeBytes
-        // Per Input size: outpoint (32B txId + 4B index) + sigScript (~66B) + sequence (8B) + sigOpCount (1B) = ~111 bytes
         val inputSize = inputsCount * 111L
-        // Per Output size: amount (8B) + scriptVersion (2B) + scriptPubKey (~34B P2PK) = ~44 bytes
         val outputSize = outputsCount * 44L
         val serializedSizeBytes = baseHeaderSize + inputSize + outputSize
 
-        // Compute Mass: SigOps verification cost + Script byte cost
         val sigOpsMass = inputsCount * sigOpsPerInput * 1000L
-        val scriptPubKeyMass = outputsCount * (34L * 10L) // 340 grams per standard output script
+        val scriptPubKeyMass = outputsCount * (34L * 10L)
 
         return serializedSizeBytes + sigOpsMass + scriptPubKeyMass
     }
@@ -430,12 +554,6 @@ object KaspaSigner {
     fun calculateMinimumFeeSompi(mass: Long, feeRateSompiPerGram: Double = 1.0): Long {
         val calculatedFee = (mass * feeRateSompiPerGram).toLong()
         return maxOf(calculatedFee, 386_000L) // Minimum 386,000 Sompi (0.00386 KAS)
-    }
-
-    private fun calculateTransactionId(rawJson: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(rawJson.toByteArray(Charsets.UTF_8))
-        return byteArrayToHexString(hash)
     }
 
     fun addressToScriptPublicKey(address: String): String {

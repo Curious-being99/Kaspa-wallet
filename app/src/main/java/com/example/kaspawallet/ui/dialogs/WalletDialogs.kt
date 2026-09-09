@@ -54,6 +54,7 @@ import com.example.kaspawallet.data.model.TransactionEntity
 import com.example.kaspawallet.data.model.UtxoEntry
 import com.example.kaspawallet.ui.KaspaViewModel
 import com.example.kaspawallet.ui.components.KaspaQrCode
+import com.example.kaspawallet.ui.components.RealQrCodeScannerDialog
 import com.example.kaspawallet.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -595,71 +596,15 @@ fun SendKasDialog(
     }
 
     if (showQrScanner) {
-        AlertDialog(
+        RealQrCodeScannerDialog(
             onDismissRequest = { showQrScanner = false },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = KaspaPrimary)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text("Scan Kaspa QR Code", color = KaspaTextPrimary, fontWeight = FontWeight.Bold)
+            onQrCodeScanned = { scannedAddress, scannedAmount ->
+                recipientAddress = scannedAddress
+                if (scannedAmount != null && scannedAmount > 0.0) {
+                    amountText = scannedAmount.toString()
                 }
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(200.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(KaspaSurfaceVariant),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            CircularProgressIndicator(color = KaspaPrimary, strokeWidth = 3.dp)
-                            Text("Camera Viewfinder Active...", color = KaspaTextSecondary, fontSize = 12.sp)
-                        }
-                    }
-                    Text(
-                        "Align Kaspa address QR code within the frame, or select a sample address below to simulate a scan.",
-                        color = KaspaTextSecondary,
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                recipientAddress = "kaspa:qp8l8xy3h967q94z48yv6z2g48q32z7y72g48q32z7"
-                                showQrScanner = false
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = KaspaPrimary)
-                        ) {
-                            Text("Simulate Scan: Testnet Address", fontSize = 12.sp)
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                recipientAddress = "kaspa:qq8l8xy3h967q94z48yv6z2g48q32z7y72g48q32z7q"
-                                showQrScanner = false
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = KaspaPrimary)
-                        ) {
-                            Text("Simulate Scan: Mainnet Address", fontSize = 12.sp)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showQrScanner = false }) {
-                    Text("Cancel", color = KaspaTextSecondary)
-                }
-            },
-            containerColor = KaspaSurface
+                showQrScanner = false
+            }
         )
     }
 }

@@ -227,6 +227,7 @@ fun BlockDagTab(
 
                     Button(
                         onClick = {
+                            viewModel.setCustomNodeUrl(customNodeUrl.ifBlank { null })
                             viewModel.refreshAll()
                         },
                         enabled = !state.isRefreshing,

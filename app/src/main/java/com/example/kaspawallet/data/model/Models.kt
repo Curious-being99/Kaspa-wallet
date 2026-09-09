@@ -6,10 +6,10 @@ import kotlinx.serialization.Serializable
 
 enum class KaspaNetwork(val displayName: String, val prefix: String, val defaultRpc: String) {
     MAINNET("Kaspa Mainnet", "kaspa:", "https://api.kaspa.org"),
-    TESTNET_10("Testnet 10", "kaspatest:", "https://api-testnet-10.kaspa.org"),
-    TESTNET_11("Testnet 11 (10bps)", "kaspatest:", "https://api-testnet-11.kaspa.org"),
-    DEVNET("Devnet", "kaspadev:", "http://127.0.0.1:16210"),
-    SIMNET("Simnet", "kaspasim:", "http://127.0.0.1:16510");
+    TESTNET_10("Testnet 10", "kaspatest:", "https://api-tn10.kaspa.org"),
+    TESTNET_11("Testnet 11 (10bps)", "kaspatest:", "https://api-tn11.kaspa.org"),
+    DEVNET("Devnet", "kaspadev:", "http://10.0.2.2:16210"),
+    SIMNET("Simnet", "kaspasim:", "http://10.0.2.2:16510");
 
     fun formatAddress(rawAddress: String): String {
         return if (rawAddress.startsWith(prefix)) rawAddress else "$prefix$rawAddress"

@@ -62,7 +62,7 @@ class KaspaWalletRepository(
                         syncAccountOnChain(currentAccId)
                     }
                 } catch (e: Exception) {
-                    Log.e("KaspaWalletRepository", "Periodic sync error", e)
+                    Log.w("KaspaWalletRepository", "Periodic sync warning: ${e.message}")
                 }
                 delay(12000) // Poll real network every 12 seconds
             }
@@ -70,8 +70,14 @@ class KaspaWalletRepository(
     }
 
     suspend fun syncNetworkMetrics() {
-        val liveDag = apiClient.fetchBlockDagInfo(_currentNetwork.value)
-        _blockDagInfo.value = liveDag
+        try {
+            val liveDag = apiClient.fetchBlockDagInfo(_currentNetwork.value)
+            if (liveDag.blockCount > 0) {
+                _blockDagInfo.value = liveDag
+            }
+        } catch (e: Exception) {
+            Log.w("KaspaWalletRepository", "Network metrics update skipped: ${e.message}")
+        }
     }
 
     suspend fun syncMarketPrice() {
@@ -126,6 +132,13 @@ class KaspaWalletRepository(
             if (currentAcc != null) {
                 syncAccountOnChain(currentAcc)
             }
+        }
+    }
+
+    fun setCustomRpcEndpoint(url: String?) {
+        apiClient.customEndpoint = url
+        repositoryScope.launch {
+            syncNetworkMetrics()
         }
     }
 
@@ -289,58 +302,60 @@ class KaspaWalletRepository(
         }
 
         val accountUtxosList = _accountUtxos.value[senderAccount.id] ?: emptyList()
+        // If cached UTXOs are empty or sum is insufficient, fetch live from Kaspa network
+        val availableUtxos = if (accountUtxosList.isEmpty() || accountUtxosList.sumOf { it.amountSompi } < totalDebit) {
+            val live = apiClient.fetchAddressUtxos(senderAccount.address, _currentNetwork.value)
+            if (live.isNotEmpty()) {
+                _accountUtxos.update { it + (senderAccount.id to live) }
+            }
+            live
+        } else {
+            accountUtxosList
+        }
+
         val selectedUtxos = if (manualUtxos != null && manualUtxos.isNotEmpty()) {
             val selectedSum = manualUtxos.sumOf { it.amountSompi }
             if (selectedSum < totalDebit) {
                 throw IllegalArgumentException("Selected UTXOs sum is insufficient. Selected: ${KaspaUtils.formatSompi(selectedSum)}, Required: ${KaspaUtils.formatSompi(totalDebit)}")
             }
             manualUtxos
-        } else if (accountUtxosList.isNotEmpty()) {
+        } else if (availableUtxos.isNotEmpty()) {
             val selected = mutableListOf<UtxoEntry>()
             var accumulated = 0L
-            for (u in accountUtxosList) {
+            for (u in availableUtxos) {
                 selected.add(u)
                 accumulated += u.amountSompi
                 if (accumulated >= totalDebit) break
             }
+            if (accumulated < totalDebit) {
+                throw IllegalStateException("Insufficient confirmed UTXOs on Kaspa ${_currentNetwork.value.displayName}. Available: ${KaspaUtils.formatSompi(accumulated)}, Required: ${KaspaUtils.formatSompi(totalDebit)}")
+            }
             selected
         } else {
-            // Synthesize account UTXO for signing
-            listOf(
-                UtxoEntry(
-                    outpointTxId = KaspaUtils.generateTxId(),
-                    outpointIndex = 0,
-                    amountSompi = senderAccount.balanceSompi,
-                    scriptPublicKey = KaspaSigner.addressToScriptPublicKey(senderAccount.address),
-                    blockDaaScore = _blockDagInfo.value.virtualDaaScore,
-                    isCoinbase = false
-                )
-            )
+            throw IllegalStateException("No confirmed UTXOs found for address ${senderAccount.address} on Kaspa ${_currentNetwork.value.displayName}. Please fund this address before sending.")
         }
 
-        // Cryptographically sign transaction using BIP340 Schnorr and Kaspa Sighash
-        val (signedTxJson, txId) = try {
-            KaspaSigner.createAndSignTransaction(
-                seed = seed,
-                accountIndex = senderAccount.accountIndex,
-                inputs = selectedUtxos,
-                recipientAddress = recipientAddress,
-                amountSompi = amountSompi,
-                feeSompi = feeSompi,
-                changeAddress = changeAddress,
-                network = _currentNetwork.value
-            )
-        } catch (e: Exception) {
-            Log.e("KaspaWalletRepository", "Error signing transaction with Schnorr", e)
-            val fallbackTxId = KaspaUtils.generateTxId()
-            val fallbackJson = KaspaUtils.buildTransactionJson(
-                senderAddress = senderAccount.address,
-                recipientAddress = recipientAddress,
-                amountSompi = amountSompi,
-                feeSompi = feeSompi
-            )
-            Pair(fallbackJson, fallbackTxId)
+        // Cryptographically sign transaction using BIP340 Schnorr and Kaspa Blake2b Sighash
+        val (signedTxJson, txId) = KaspaSigner.createAndSignTransaction(
+            seed = seed,
+            accountIndex = senderAccount.accountIndex,
+            inputs = selectedUtxos,
+            recipientAddress = recipientAddress,
+            amountSompi = amountSompi,
+            feeSompi = feeSompi,
+            changeAddress = changeAddress,
+            network = _currentNetwork.value
+        )
+
+        // Broadcast authentic cryptographically signed transaction to Kaspa network
+        val (broadcastSuccess, responseMsg) = apiClient.broadcastTransaction(signedTxJson, _currentNetwork.value)
+        Log.i("KaspaWalletRepository", "Broadcast result: $broadcastSuccess ($responseMsg)")
+
+        if (!broadcastSuccess) {
+            throw IllegalStateException("Transaction broadcast rejected by Kaspa network: $responseMsg")
         }
+
+        val finalTxId = if (responseMsg.length == 64 && !responseMsg.contains(" ")) responseMsg else txId
 
         val newSenderBalance = senderAccount.balanceSompi - totalDebit
         database.accountDao().updateBalance(senderAccount.id, newSenderBalance)
@@ -348,7 +363,7 @@ class KaspaWalletRepository(
         val currentDaa = _blockDagInfo.value.virtualDaaScore + 1
 
         val tx = TransactionEntity(
-            id = txId,
+            id = finalTxId,
             walletId = senderAccount.walletId,
             accountId = senderAccount.id,
             txType = TransactionType.SEND,
@@ -362,10 +377,6 @@ class KaspaWalletRepository(
             note = note
         )
         database.transactionDao().insertTransaction(tx)
-
-        // Broadcast cryptographically signed transaction to Kaspa network
-        val (broadcastSuccess, responseMsg) = apiClient.broadcastTransaction(signedTxJson, _currentNetwork.value)
-        Log.i("KaspaWalletRepository", "Broadcast result: $broadcastSuccess ($responseMsg)")
 
         // Re-sync on-chain balance after broadcast
         repositoryScope.launch {

@@ -149,6 +149,10 @@ class KaspaViewModel(private val repository: KaspaWalletRepository) : ViewModel(
         repository.setNetwork(network)
     }
 
+    fun setCustomNodeUrl(url: String?) {
+        repository.setCustomRpcEndpoint(url)
+    }
+
     fun setCurrency(currency: String) {
         _uiState.update { it.copy(selectedCurrency = currency) }
     }
