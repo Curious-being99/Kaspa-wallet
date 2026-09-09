@@ -522,10 +522,13 @@ class KaspaApiClient {
         address: String,
         walletId: String,
         accountId: String,
-        network: KaspaNetwork
+        network: KaspaNetwork,
+        knownAccountAddresses: Set<String> = emptySet()
     ): List<TransactionEntity> = withContext(Dispatchers.IO) {
         val candidateUrls = getCandidateBaseUrls(network)
         val result = mutableListOf<TransactionEntity>()
+        val allKnown = (knownAccountAddresses + address).map { it.lowercase().trim() }.filter { it.isNotEmpty() }.toSet()
+
         for (baseUrl in candidateUrls) {
             try {
                 val url = baseUrl.toHttpUrl().newBuilder()
@@ -547,7 +550,7 @@ class KaspaApiClient {
                         val array = JSONArray(body)
                         for (i in 0 until array.length()) {
                             val tx = array.getJSONObject(i)
-                            val txId = tx.optString("transaction_id", "")
+                            val txId = tx.optString("transaction_id", tx.optString("transactionId", ""))
                             val timestamp = tx.optLong("block_time", System.currentTimeMillis())
                             val daaScore = tx.optLong("accepting_block_blue_score", 0L)
 
@@ -567,10 +570,10 @@ class KaspaApiClient {
                                 for (k in 0 until inputs.length()) {
                                     val inObj = inputs.getJSONObject(k)
                                     val prevOut = inObj.optJSONObject("previous_outpoint_address")
-                                    val inputAddr = prevOut?.optString("address", "") ?: inObj.optString("previous_outpoint_address", "")
+                                    val inputAddr = (prevOut?.optString("address", "") ?: inObj.optString("previous_outpoint_address", "")).lowercase().trim()
                                     val inAmount = inObj.optLong("previous_outpoint_amount", 0L)
                                     totalInputAmount += inAmount
-                                    if (inputAddr == address) {
+                                    if (inputAddr.isNotEmpty() && allKnown.contains(inputAddr)) {
                                         hasMyInput = true
                                     }
                                     if (senderAddr.isEmpty() && inputAddr.isNotEmpty()) {
@@ -582,9 +585,9 @@ class KaspaApiClient {
                             if (outputs != null) {
                                 for (j in 0 until outputs.length()) {
                                     val out = outputs.getJSONObject(j)
-                                    val outAddr = out.optString("script_public_key_address", "")
+                                    val outAddr = out.optString("script_public_key_address", "").lowercase().trim()
                                     val outAmount = out.optLong("amount", 0L)
-                                    if (outAddr == address) {
+                                    if (outAddr.isNotEmpty() && allKnown.contains(outAddr)) {
                                         totalOutputToMe += outAmount
                                     } else {
                                         totalOutputOther += outAmount
@@ -624,7 +627,7 @@ class KaspaApiClient {
                                     feeSompi = calculatedFee,
                                     senderAddress = if (senderAddr.isNotEmpty()) senderAddr else address,
                                     recipientAddress = if (recipientAddr.isNotEmpty()) recipientAddr else address,
-                                    timestamp = timestamp,
+                                    timestamp = if (timestamp > 0) timestamp else System.currentTimeMillis(),
                                     daaScore = daaScore,
                                     status = TransactionStatus.CONFIRMED,
                                     note = if (rawMass > 0) "Mass: $rawMass grams" else ""
@@ -655,7 +658,7 @@ class KaspaApiClient {
                 val bodyStr = response.body?.string() ?: ""
                 if (response.isSuccessful) {
                     val json = JSONObject(bodyStr)
-                    val txId = json.optString("transactionId", json.optString("txId", "success"))
+                    val txId = json.optString("transactionId", json.optString("transaction_id", json.optString("txId", "success")))
                     Pair(true, txId)
                 } else {
                     Pair(false, "Node response: ${response.code} $bodyStr")

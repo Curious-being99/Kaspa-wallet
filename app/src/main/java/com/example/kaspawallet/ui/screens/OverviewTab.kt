@@ -381,7 +381,7 @@ fun TransactionItemRow(tx: com.example.kaspawallet.data.model.TransactionEntity)
         isCompound -> Color(0xFFBA68C8)
         isTransfer -> Color(0xFF64B5F6)
         isIncoming -> KaspaSuccess
-        else -> KaspaPrimary
+        else -> Color(0xFFE0E0E0)
     }
 
     val title = when (tx.txType) {

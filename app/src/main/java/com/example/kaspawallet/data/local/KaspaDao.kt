@@ -60,6 +60,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE accountId = :accountId ORDER BY timestamp DESC")
     fun getTransactionsForAccount(accountId: String): Flow<List<TransactionEntity>>
 
+    @Query("SELECT * FROM transactions WHERE id = :txId LIMIT 1")
+    fun getTransactionById(txId: String): TransactionEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertTransaction(transaction: TransactionEntity): Long
 

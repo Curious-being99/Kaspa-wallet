@@ -103,11 +103,28 @@ class KaspaWalletRepository(
         allDiscoveredUtxos.addAll(primaryUtxos)
         val primaryBal = apiClient.fetchAddressBalance(account.address, network)
 
+        // Derive known account addresses to correctly categorize SEND vs RECEIVE transactions
+        val wallet = database.walletDao().getWalletById(account.walletId)
+        val words = wallet?.encryptedMnemonic?.split(" ") ?: emptyList()
+        val knownAddresses = mutableSetOf(account.address)
+        if (words.size in listOf(12, 24)) {
+            for (branch in 0..1) {
+                for (idx in 0 until 30) {
+                    val addr = if (branch == 0) {
+                        KaspaCrypto.deriveKaspaAddress(words, account.accountIndex, idx, network)
+                    } else {
+                        KaspaCrypto.deriveKaspaChangeAddress(words, account.accountIndex, idx, network)
+                    }
+                    if (addr.isNotBlank()) knownAddresses.add(addr)
+                }
+            }
+        }
+
         // 2. Fetch real Transactions for primary address
-        val liveTxs = apiClient.fetchAddressTransactions(account.address, account.walletId, accountId, network)
+        val liveTxs = apiClient.fetchAddressTransactions(account.address, account.walletId, accountId, network, knownAddresses)
         if (liveTxs.isNotEmpty()) {
             for (tx in liveTxs) {
-                database.transactionDao().insertTransaction(tx)
+                saveOrMergeTransaction(tx)
             }
         }
 
@@ -174,6 +191,23 @@ class KaspaWalletRepository(
         database.accountDao().updateBalance(accountId, finalBalance)
         _accountUtxos.update { current ->
             current + (accountId to allDiscoveredUtxos.distinctBy { "${it.outpointTxId}:${it.outpointIndex}" })
+        }
+    }
+
+    suspend fun saveOrMergeTransaction(tx: TransactionEntity) = withContext(Dispatchers.IO) {
+        val existing = database.transactionDao().getTransactionById(tx.id)
+        if (existing != null) {
+            val mergedTx = tx.copy(
+                note = if (existing.note.isNotBlank() && !existing.note.startsWith("Mass:")) existing.note else tx.note,
+                txType = if (existing.txType == TransactionType.SEND || existing.txType == TransactionType.COMPOUND) existing.txType else tx.txType,
+                recipientAddress = if (existing.recipientAddress.isNotBlank() && existing.recipientAddress != existing.senderAddress) existing.recipientAddress else tx.recipientAddress,
+                amountSompi = if (existing.txType == TransactionType.SEND && existing.amountSompi > 0) existing.amountSompi else tx.amountSompi,
+                feeSompi = if (existing.feeSompi > 0) existing.feeSompi else tx.feeSompi,
+                status = TransactionStatus.CONFIRMED
+            )
+            database.transactionDao().insertTransaction(mergedTx)
+        } else {
+            database.transactionDao().insertTransaction(tx)
         }
     }
 
@@ -352,9 +386,6 @@ class KaspaWalletRepository(
         manualUtxos: List<UtxoEntry>? = null
     ): TransactionEntity = withContext(Dispatchers.IO) {
         val totalDebit = amountSompi + feeSompi
-        if (senderAccount.balanceSompi < totalDebit) {
-            throw IllegalArgumentException("Insufficient funds. Available: ${senderAccount.balanceSompi} Sompi, Required: $totalDebit Sompi")
-        }
 
         val wallet = database.walletDao().getWalletById(senderAccount.walletId)
         val words = wallet?.encryptedMnemonic?.split(" ") ?: emptyList()
@@ -435,7 +466,7 @@ class KaspaWalletRepository(
 
         val finalTxId = if (responseMsg.length == 64 && !responseMsg.contains(" ")) responseMsg else txId
 
-        val newSenderBalance = senderAccount.balanceSompi - totalDebit
+        val newSenderBalance = maxOf(0L, senderAccount.balanceSompi - totalDebit)
         database.accountDao().updateBalance(senderAccount.id, newSenderBalance)
 
         val currentDaa = _blockDagInfo.value.virtualDaaScore + 1

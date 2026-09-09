@@ -717,14 +717,14 @@ fun ScanIndexingScreen(
                                             .clip(CircleShape)
                                             .background(
                                                 if (isIncoming) KaspaSuccess.copy(alpha = 0.15f)
-                                                else KaspaError.copy(alpha = 0.15f)
+                                                else Color(0xFFE0E0E0).copy(alpha = 0.15f)
                                             ),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = if (isIncoming) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
                                             contentDescription = null,
-                                            tint = if (isIncoming) KaspaSuccess else KaspaError,
+                                            tint = if (isIncoming) KaspaSuccess else Color(0xFFE0E0E0),
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
