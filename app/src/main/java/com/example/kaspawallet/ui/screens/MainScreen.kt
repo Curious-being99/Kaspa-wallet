@@ -108,22 +108,13 @@ fun MainScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.noRippleClickable { showWalletMenu = true }
                         ) {
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        state.activeWallet?.name ?: "Kaspa Wallet",
-                                        color = KaspaTextPrimary,
-                                        fontSize = 17.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Switch wallet", tint = KaspaPrimary)
-                                }
-                                Text(
-                                    "${state.accounts.size} Accounts • ${state.network.displayName}",
-                                    color = KaspaTextSecondary,
-                                    fontSize = 11.sp
-                                )
-                            }
+                            Text(
+                                state.activeWallet?.name ?: "Kaspa Wallet",
+                                color = KaspaTextPrimary,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = "Switch wallet", tint = KaspaPrimary)
                         }
 
                         // Wallet Switch Dropdown
@@ -269,32 +260,6 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Account Switcher Horizontal Bar if in Overview Tab
-            if (state.selectedTab == MainTab.OVERVIEW && state.accounts.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    state.accounts.forEach { acc ->
-                        val isSelected = state.activeAccount?.id == acc.id
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = { viewModel.selectAccount(acc) },
-                            label = { Text(acc.name, fontSize = 12.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = KaspaPrimary,
-                                selectedLabelColor = Color(0xFF003731),
-                                containerColor = KaspaSurfaceVariant,
-                                labelColor = KaspaTextSecondary
-                            )
-                        )
-                    }
-                }
-            }
-
             // Tab Content
             Box(modifier = Modifier.weight(1f)) {
                 when (state.selectedTab) {

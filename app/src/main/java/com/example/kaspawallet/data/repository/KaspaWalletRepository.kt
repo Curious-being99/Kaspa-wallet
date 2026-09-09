@@ -17,8 +17,8 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class KaspaWalletRepository(
-    private val database: KaspaDatabase,
-    private val apiClient: KaspaApiClient = KaspaApiClient()
+    val database: KaspaDatabase,
+    val apiClient: KaspaApiClient = KaspaApiClient()
 ) {
     val allWallets: Flow<List<WalletEntity>> = database.walletDao().getAllWallets()
     val allContacts: Flow<List<ContactEntity>> = database.contactDao().getAllContacts()
@@ -158,7 +158,8 @@ class KaspaWalletRepository(
     suspend fun createWallet(
         name: String,
         mnemonicWords: List<String>,
-        hasPassphrase: Boolean = false
+        hasPassphrase: Boolean = false,
+        passphrase: String = ""
     ): Pair<WalletEntity, AccountEntity> = withContext(Dispatchers.IO) {
         val walletId = UUID.randomUUID().toString()
         val wallet = WalletEntity(
@@ -173,7 +174,12 @@ class KaspaWalletRepository(
 
         // Create default Primary account (#0)
         val accountId = UUID.randomUUID().toString()
-        val address = KaspaUtils.generateDeterministicAddress(mnemonicWords, 0, _currentNetwork.value)
+        val address = KaspaUtils.generateDeterministicAddress(
+            mnemonicWords = mnemonicWords,
+            accountIndex = 0,
+            network = _currentNetwork.value,
+            passphrase = passphrase
+        )
         
         // Fetch real on-chain balance (0 Sompi for fresh or real balance if imported)
         val realOnChainBalance = apiClient.fetchAddressBalance(address, _currentNetwork.value)

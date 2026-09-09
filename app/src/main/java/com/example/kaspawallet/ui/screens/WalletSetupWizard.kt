@@ -53,7 +53,8 @@ enum class SetupStep {
     CONFIG,
     RECOVERY_PHRASE,
     VERIFY_QUIZ,
-    IMPORT_PHRASE
+    IMPORT_PHRASE,
+    SCAN_INDEXING
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -109,6 +110,38 @@ fun WalletSetupWizard(
         }
     }
 
+    if (currentStep == SetupStep.SCAN_INDEXING) {
+        val scanState by viewModel.scanIndexingState.collectAsState()
+        val uiState by viewModel.uiState.collectAsState()
+        ScanIndexingScreen(
+            state = scanState,
+            marketInfo = uiState.marketInfo,
+            selectedCurrency = uiState.selectedCurrency,
+            onContinue = {
+                viewModel.finishScanAndNavigateToWallet()
+                onDismiss()
+            },
+            onRetry = {
+                val words = if (isImportMode) {
+                    importText.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                } else {
+                    generatedWords
+                }
+                viewModel.startScanAndIndex(
+                    context = context,
+                    name = walletName.trim(),
+                    words = words,
+                    hasPassphrase = hasAdvancedPassphrase,
+                    passphrase = bip39Passphrase,
+                    network = selectedNetwork,
+                    password = password,
+                    isImport = isImportMode
+                )
+            }
+        )
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -119,6 +152,7 @@ fun WalletSetupWizard(
                             SetupStep.RECOVERY_PHRASE -> "Step 2: Backup Recovery Phrase"
                             SetupStep.VERIFY_QUIZ -> "Step 3: Verify Recovery Phrase"
                             SetupStep.IMPORT_PHRASE -> "Step 2: Enter Seed Phrase"
+                            SetupStep.SCAN_INDEXING -> "Step 3: On-Chain Indexing"
                         },
                         color = KaspaTextPrimary,
                         fontSize = 16.sp,
@@ -133,6 +167,7 @@ fun WalletSetupWizard(
                                 SetupStep.RECOVERY_PHRASE -> currentStep = SetupStep.CONFIG
                                 SetupStep.VERIFY_QUIZ -> currentStep = SetupStep.RECOVERY_PHRASE
                                 SetupStep.IMPORT_PHRASE -> currentStep = SetupStep.CONFIG
+                                SetupStep.SCAN_INDEXING -> onDismiss()
                             }
                         }
                     ) {
@@ -168,6 +203,7 @@ fun WalletSetupWizard(
                         SetupStep.CONFIG -> 1
                         SetupStep.RECOVERY_PHRASE, SetupStep.IMPORT_PHRASE -> 2
                         SetupStep.VERIFY_QUIZ -> 3
+                        SetupStep.SCAN_INDEXING -> stepsTotal
                     }
 
                     for (i in 1..stepsTotal) {
@@ -668,14 +704,16 @@ fun WalletSetupWizard(
 
                         Button(
                             onClick = {
-                                viewModel.createNewWallet(
+                                currentStep = SetupStep.SCAN_INDEXING
+                                viewModel.startScanAndIndex(
                                     context = context,
-                                    name = walletName,
+                                    name = walletName.trim(),
                                     words = generatedWords,
                                     hasPassphrase = hasAdvancedPassphrase,
                                     passphrase = bip39Passphrase,
                                     network = selectedNetwork,
-                                    password = password
+                                    password = password,
+                                    isImport = false
                                 )
                             },
                             enabled = allAnswered && allCorrect,
@@ -686,7 +724,9 @@ fun WalletSetupWizard(
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = KaspaPrimary, contentColor = Color(0xFF003731))
                         ) {
-                            Text("Create & Initialize Kaspa Wallet", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text("Confirm & Index On-Chain", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
                         }
                     }
 
@@ -784,13 +824,17 @@ fun WalletSetupWizard(
 
                         Button(
                             onClick = {
-                                viewModel.importWallet(
+                                val words = importText.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                                currentStep = SetupStep.SCAN_INDEXING
+                                viewModel.startScanAndIndex(
                                     context = context,
-                                    name = walletName,
-                                    mnemonicPhrase = importText.trim(),
-                                    network = selectedNetwork,
+                                    name = walletName.trim(),
+                                    words = words,
+                                    hasPassphrase = hasAdvancedPassphrase,
                                     passphrase = bip39Passphrase,
-                                    password = password
+                                    network = selectedNetwork,
+                                    password = password,
+                                    isImport = true
                                 )
                             },
                             enabled = canImport,
@@ -801,8 +845,14 @@ fun WalletSetupWizard(
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = KaspaPrimary, contentColor = Color(0xFF003731))
                         ) {
-                            Text("Import Kaspa Wallet", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text("Confirm & Index On-Chain", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
                         }
+                    }
+
+                    SetupStep.SCAN_INDEXING -> {
+                        // Handled above before Scaffold
                     }
                 }
             }

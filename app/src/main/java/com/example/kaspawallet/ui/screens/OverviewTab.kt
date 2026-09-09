@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import com.example.kaspawallet.ui.theme.noRippleClickable
@@ -25,11 +26,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
+import com.example.kaspawallet.R
 import com.example.kaspawallet.data.crypto.KaspaUtils
 import com.example.kaspawallet.data.security.BiometricAuthManager
 import com.example.kaspawallet.data.model.TransactionType
@@ -56,7 +59,7 @@ fun OverviewTab(
             .fillMaxSize()
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
+        contentPadding = PaddingValues(top = 0.dp, bottom = 24.dp)
     ) {
         // Balance Card
         item {
@@ -80,40 +83,6 @@ fun OverviewTab(
                         .padding(20.dp)
                 ) {
                     Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(KaspaPrimaryGlow)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    activeAcc?.name ?: "Account",
-                                    color = KaspaTextSecondary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                            Text(
-                                state.network.displayName,
-                                color = KaspaPrimary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(KaspaPrimary.copy(alpha = 0.15f))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
                         // Large Balance Display
                         Text(
                             KaspaUtils.formatKas(kasBalance),
@@ -277,38 +246,19 @@ fun OverviewTab(
                             )
                         }
                         Spacer(modifier = Modifier.height(2.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "$${String.format(java.util.Locale.US, "%.4f", state.marketInfo.priceUsd)}",
-                                color = KaspaTextPrimary,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            IconButton(
-                                onClick = { viewModel.refreshPrice() },
-                                modifier = Modifier.size(24.dp).padding(start = 4.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Refresh,
-                                    contentDescription = "Refresh Price",
-                                    tint = KaspaPrimary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("BlockDAG Score", color = KaspaTextSecondary, fontSize = 12.sp)
-                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            "DAA #${state.blockDagInfo.virtualDaaScore}",
-                            color = KaspaPrimaryGlow,
-                            fontSize = 13.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold
+                            "$${String.format(java.util.Locale.US, "%.4f", state.marketInfo.priceUsd)}",
+                            color = KaspaTextPrimary,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
+
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_kaspa_round_logo),
+                        contentDescription = "Kaspa Logo",
+                        modifier = Modifier.size(42.dp)
+                    )
                 }
             }
         }
