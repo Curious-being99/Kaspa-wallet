@@ -389,8 +389,8 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
             _scanIndexingState.value = ScanIndexingUiState(
                 isScanning = true,
                 stage = ScanIndexingStage.DERIVING_KEYS,
-                progress = 0.15f,
-                statusMessage = "Deriving cryptographic BIP-44 keypair & address...",
+                progress = 0.0f,
+                statusMessage = "Initializing on-chain BlockDAG indexer...",
                 derivedAddress = initialAddress,
                 network = network,
                 walletName = name,
@@ -403,7 +403,14 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 }
 
                 // Stage 1: Key Derivation & Instant DB Persistence
-                kotlinx.coroutines.delay(400)
+                kotlinx.coroutines.delay(250)
+                _scanIndexingState.update {
+                    it.copy(
+                        progress = 0.08f,
+                        statusMessage = "Deriving cryptographic BIP-44 keypair & address..."
+                    )
+                }
+                kotlinx.coroutines.delay(250)
                 val targetAddress = if (initialAddress.isNotBlank()) initialAddress else {
                     KaspaUtils.generateDeterministicAddress(
                         mnemonicWords = words,
@@ -444,7 +451,7 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 _scanIndexingState.update {
                     it.copy(
                         derivedAddress = targetAddress,
-                        progress = 0.30f,
+                        progress = 0.18f,
                         statusMessage = "Target address derived: ${targetAddress.take(18)}..."
                     )
                 }
@@ -453,7 +460,7 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 _scanIndexingState.update {
                     it.copy(
                         stage = ScanIndexingStage.CONNECTING_NODE,
-                        progress = 0.45f,
+                        progress = 0.24f,
                         statusMessage = "Connecting to Kaspa node (${network.displayName})..."
                     )
                 }
@@ -463,11 +470,11 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                     BlockDagInfo()
                 }
                 val liveDaaScore = if (dagInfo.virtualDaaScore > 0) dagInfo.virtualDaaScore else 53_580_000L
-                kotlinx.coroutines.delay(400)
+                kotlinx.coroutines.delay(250)
                 _scanIndexingState.update {
                     it.copy(
                         daaScore = liveDaaScore,
-                        progress = 0.60f,
+                        progress = 0.32f,
                         statusMessage = "Connected to BlockDAG. Current DAA: #$liveDaaScore"
                     )
                 }
@@ -476,7 +483,7 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 _scanIndexingState.update {
                     it.copy(
                         stage = ScanIndexingStage.SCANNING_UTXOS,
-                        progress = 0.72f,
+                        progress = 0.36f,
                         statusMessage = "Scanning UTXOs across 30 receive & 30 change addresses..."
                     )
                 }
@@ -498,8 +505,10 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 val activeAddressesWithActivity = mutableSetOf<String>()
                 var aggregatedBalanceFromCalls = 0L
 
-                // Scan concurrently in batches of 5 to avoid REST rate limits and speed up completion
-                for (chunk in uniqueAddresses.chunked(5)) {
+                // Scan concurrently in batches of 5 to avoid REST rate limits and update progress smoothly
+                val chunks = uniqueAddresses.chunked(5)
+                val totalChunks = chunks.size.coerceAtLeast(1)
+                for ((chunkIndex, chunk) in chunks.withIndex()) {
                     val chunkResults = try {
                         kotlinx.coroutines.coroutineScope {
                             val deferreds = chunk.map { addr ->
@@ -525,25 +534,35 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                             activeAddressesWithActivity.add(addr)
                         }
                     }
+
+                    val stepProgress = 0.36f + (0.38f * (chunkIndex + 1) / totalChunks)
+                    _scanIndexingState.update {
+                        it.copy(
+                            utxoCount = discoveredUtxos.size,
+                            progress = stepProgress,
+                            statusMessage = "Scanning address batch ${chunkIndex + 1}/$totalChunks on-chain..."
+                        )
+                    }
+                    kotlinx.coroutines.delay(120)
                 }
 
                 val utxoSumSompi = discoveredUtxos.sumOf { it.amountSompi }
                 val totalDiscoveredBalanceSompi = maxOf(utxoSumSompi, aggregatedBalanceFromCalls)
 
-                kotlinx.coroutines.delay(300)
                 _scanIndexingState.update {
                     it.copy(
                         utxoCount = discoveredUtxos.size,
-                        progress = 0.84f,
+                        progress = 0.78f,
                         statusMessage = if (discoveredUtxos.isNotEmpty()) "${discoveredUtxos.size} UTXOs discovered on-chain (30 address limit)" else "Zero unspent UTXOs (Clean graph)"
                     )
                 }
 
                 // Stage 4: Calculating On-Chain Consensus Balance
+                kotlinx.coroutines.delay(200)
                 _scanIndexingState.update {
                     it.copy(
                         stage = ScanIndexingStage.CALCULATING_BALANCE,
-                        progress = 0.90f,
+                        progress = 0.84f,
                         balanceSompi = totalDiscoveredBalanceSompi,
                         statusMessage = "Confirmed balance: ${KaspaUtils.formatKas(KaspaUtils.sompiToKas(totalDiscoveredBalanceSompi))} KAS"
                     )
@@ -553,7 +572,7 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 _scanIndexingState.update {
                     it.copy(
                         stage = ScanIndexingStage.INDEXING_HISTORY,
-                        progress = 0.95f,
+                        progress = 0.88f,
                         statusMessage = "Indexing BlockDAG transaction history..."
                     )
                 }
@@ -567,7 +586,9 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 // Fetch transactions for primary address & any addresses with activity
                 val targetAddressesForTxs = (setOf(initialAccount.address) + activeAddressesWithActivity).toList()
                 val allTxsList = mutableListOf<TransactionEntity>()
-                for (chunk in targetAddressesForTxs.chunked(4)) {
+                val txChunks = targetAddressesForTxs.chunked(4)
+                val totalTxChunks = txChunks.size.coerceAtLeast(1)
+                for ((tIdx, chunk) in txChunks.withIndex()) {
                     val txChunk = try {
                         kotlinx.coroutines.coroutineScope {
                             val deferreds = chunk.map { addr ->
@@ -581,6 +602,14 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                         emptyList()
                     }
                     allTxsList.addAll(txChunk)
+                    val txStepProgress = 0.88f + (0.08f * (tIdx + 1) / totalTxChunks)
+                    _scanIndexingState.update {
+                        it.copy(
+                            progress = txStepProgress,
+                            txCount = allTxsList.size
+                        )
+                    }
+                    kotlinx.coroutines.delay(100)
                 }
                 val allTxs = allTxsList.distinctBy { it.id }
                 for (tx in allTxs) {
@@ -597,7 +626,7 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 val finalBalance = syncedAccount.balanceSompi.coerceAtLeast(totalDiscoveredBalanceSompi)
 
                 // Stage 6: Complete
-                kotlinx.coroutines.delay(300)
+                kotlinx.coroutines.delay(250)
                 _scanIndexingState.update {
                     it.copy(
                         stage = ScanIndexingStage.COMPLETE,

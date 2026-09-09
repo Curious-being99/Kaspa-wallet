@@ -84,6 +84,13 @@ fun ScanIndexingScreen(
         label = "radar_rotation"
     )
 
+    // Smooth real-time progress interpolation from 0% to 100%
+    val animatedProgress by animateFloatAsState(
+        targetValue = state.progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "smooth_indexing_progress"
+    )
+
     Scaffold(
         containerColor = KaspaBackground,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -357,7 +364,7 @@ fun ScanIndexingScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "${(state.progress * 100).toInt()}%",
+                            text = "${(animatedProgress * 100).toInt()}%",
                             color = KaspaPrimaryGlow,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
@@ -365,7 +372,7 @@ fun ScanIndexingScreen(
                     }
 
                     LinearProgressIndicator(
-                        progress = { state.progress },
+                        progress = { animatedProgress },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(8.dp)

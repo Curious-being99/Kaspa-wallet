@@ -119,7 +119,6 @@ fun WalletSetupWizard(
             selectedCurrency = uiState.selectedCurrency,
             onContinue = {
                 viewModel.finishScanAndNavigateToWallet()
-                onDismiss()
             },
             onRetry = {
                 val words = if (isImportMode) {

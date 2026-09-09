@@ -32,7 +32,9 @@ abstract class KaspaDatabase : RoomDatabase() {
                     context.applicationContext,
                     KaspaDatabase::class.java,
                     "kaspa_wallet.db"
-                ).fallbackToDestructiveMigration().build()
+                ).fallbackToDestructiveMigration()
+                .allowMainThreadQueries()
+                .build()
                 INSTANCE = instance
                 instance
             }
