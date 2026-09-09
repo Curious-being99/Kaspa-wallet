@@ -66,9 +66,9 @@ fun WalletSetupWizard(
 ) {
     val context = LocalContext.current
     var currentStep by remember {
-        mutableStateOf(if (initialMode == "IMPORT") SetupStep.CONFIG else SetupStep.CONFIG)
+        mutableStateOf(if (initialMode == "RESCAN") SetupStep.SCAN_INDEXING else SetupStep.CONFIG)
     }
-    var isImportMode by remember { mutableStateOf(initialMode == "IMPORT") }
+    var isImportMode by remember { mutableStateOf(initialMode == "IMPORT" || initialMode == "RESCAN") }
 
     // Configuration State
     var walletName by remember { mutableStateOf("Kaspa Primary Wallet") }

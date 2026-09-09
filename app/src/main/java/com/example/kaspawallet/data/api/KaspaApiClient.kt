@@ -437,80 +437,83 @@ class KaspaApiClient {
     }
 
     suspend fun fetchAddressBalance(address: String, network: KaspaNetwork): Long = withContext(Dispatchers.IO) {
-        val baseUrl = getBaseUrl(network)
-        try {
-            val url = baseUrl.toHttpUrl().newBuilder()
-                .addPathSegment("addresses")
-                .addPathSegment(address)
-                .addPathSegment("balance")
-                .build()
+        val candidateUrls = getCandidateBaseUrls(network)
+        for (baseUrl in candidateUrls) {
+            try {
+                val url = baseUrl.toHttpUrl().newBuilder()
+                    .addPathSegment("addresses")
+                    .addPathSegment(address)
+                    .addPathSegment("balance")
+                    .build()
 
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .build()
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .build()
 
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val body = response.body?.string() ?: ""
-                    val json = JSONObject(body)
-                    json.optLong("balance", 0L)
-                } else {
-                    0L
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: ""
+                        val json = JSONObject(body)
+                        return@withContext json.optLong("balance", 0L)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.d("KaspaApiClient", "Address balance check candidate $baseUrl unfulfilled for $address: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w("KaspaApiClient", "Address balance check unfulfilled for $address: ${e.message}")
-            0L
         }
+        0L
     }
 
     suspend fun fetchAddressUtxos(address: String, network: KaspaNetwork): List<UtxoEntry> = withContext(Dispatchers.IO) {
-        val baseUrl = getBaseUrl(network)
+        val candidateUrls = getCandidateBaseUrls(network)
         val result = mutableListOf<UtxoEntry>()
-        try {
-            val url = baseUrl.toHttpUrl().newBuilder()
-                .addPathSegment("addresses")
-                .addPathSegment(address)
-                .addPathSegment("utxos")
-                .build()
+        for (baseUrl in candidateUrls) {
+            try {
+                val url = baseUrl.toHttpUrl().newBuilder()
+                    .addPathSegment("addresses")
+                    .addPathSegment(address)
+                    .addPathSegment("utxos")
+                    .build()
 
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .build()
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .build()
 
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val body = response.body?.string() ?: ""
-                    val array = JSONArray(body)
-                    for (i in 0 until array.length()) {
-                        val item = array.getJSONObject(i)
-                        val outpoint = item.getJSONObject("outpoint")
-                        val txId = outpoint.optString("transactionId", "")
-                        val index = outpoint.optInt("index", 0)
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: ""
+                        val array = JSONArray(body)
+                        for (i in 0 until array.length()) {
+                            val item = array.getJSONObject(i)
+                            val outpoint = item.getJSONObject("outpoint")
+                            val txId = outpoint.optString("transactionId", "")
+                            val index = outpoint.optInt("index", 0)
 
-                        val entry = item.getJSONObject("utxoEntry")
-                        val amount = entry.optLong("amount", entry.optString("amount", "0").toLongOrNull() ?: 0L)
-                        val scriptPubKey = entry.optJSONObject("scriptPublicKey")?.optString("scriptPublicKey", "") ?: ""
-                        val blockDaaScore = entry.optLong("blockDaaScore", entry.optString("blockDaaScore", "0").toLongOrNull() ?: 0L)
-                        val isCoinbase = entry.optBoolean("isCoinbase", false)
+                            val entry = item.getJSONObject("utxoEntry")
+                            val amount = entry.optLong("amount", entry.optString("amount", "0").toLongOrNull() ?: 0L)
+                            val scriptPubKey = entry.optJSONObject("scriptPublicKey")?.optString("scriptPublicKey", "") ?: ""
+                            val blockDaaScore = entry.optLong("blockDaaScore", entry.optString("blockDaaScore", "0").toLongOrNull() ?: 0L)
+                            val isCoinbase = entry.optBoolean("isCoinbase", false)
 
-                        result.add(
-                            UtxoEntry(
-                                outpointTxId = txId,
-                                outpointIndex = index,
-                                amountSompi = amount,
-                                scriptPublicKey = scriptPubKey,
-                                blockDaaScore = blockDaaScore,
-                                isCoinbase = isCoinbase
+                            result.add(
+                                UtxoEntry(
+                                    outpointTxId = txId,
+                                    outpointIndex = index,
+                                    amountSompi = amount,
+                                    scriptPublicKey = scriptPubKey,
+                                    blockDaaScore = blockDaaScore,
+                                    isCoinbase = isCoinbase
+                                )
                             )
-                        )
+                        }
+                        return@withContext result
                     }
                 }
+            } catch (e: Exception) {
+                Log.d("KaspaApiClient", "UTXOs check candidate $baseUrl unfulfilled for $address: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w("KaspaApiClient", "UTXOs check unfulfilled for $address: ${e.message}")
         }
         result
     }
@@ -521,116 +524,119 @@ class KaspaApiClient {
         accountId: String,
         network: KaspaNetwork
     ): List<TransactionEntity> = withContext(Dispatchers.IO) {
-        val baseUrl = getBaseUrl(network)
+        val candidateUrls = getCandidateBaseUrls(network)
         val result = mutableListOf<TransactionEntity>()
-        try {
-            val url = baseUrl.toHttpUrl().newBuilder()
-                .addPathSegment("addresses")
-                .addPathSegment(address)
-                .addPathSegment("full-transactions")
-                .addQueryParameter("limit", "50")
-                .addQueryParameter("offset", "0")
-                .build()
+        for (baseUrl in candidateUrls) {
+            try {
+                val url = baseUrl.toHttpUrl().newBuilder()
+                    .addPathSegment("addresses")
+                    .addPathSegment(address)
+                    .addPathSegment("full-transactions")
+                    .addQueryParameter("limit", "50")
+                    .addQueryParameter("offset", "0")
+                    .build()
 
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .build()
+                val request = Request.Builder()
+                    .url(url)
+                    .get()
+                    .build()
 
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val body = response.body?.string() ?: ""
-                    val array = JSONArray(body)
-                    for (i in 0 until array.length()) {
-                        val tx = array.getJSONObject(i)
-                        val txId = tx.optString("transaction_id", "")
-                        val timestamp = tx.optLong("block_time", System.currentTimeMillis())
-                        val daaScore = tx.optLong("accepting_block_blue_score", 0L)
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: ""
+                        val array = JSONArray(body)
+                        for (i in 0 until array.length()) {
+                            val tx = array.getJSONObject(i)
+                            val txId = tx.optString("transaction_id", "")
+                            val timestamp = tx.optLong("block_time", System.currentTimeMillis())
+                            val daaScore = tx.optLong("accepting_block_blue_score", 0L)
 
-                        val inputs = tx.optJSONArray("inputs")
-                        val outputs = tx.optJSONArray("outputs")
-                        val rawFee = tx.optLong("fee", 0L)
-                        val rawMass = tx.optLong("mass", 0L)
+                            val inputs = tx.optJSONArray("inputs")
+                            val outputs = tx.optJSONArray("outputs")
+                            val rawFee = tx.optLong("fee", 0L)
+                            val rawMass = tx.optLong("mass", 0L)
 
-                        var totalInputAmount = 0L
-                        var totalOutputToMe = 0L
-                        var totalOutputOther = 0L
-                        var hasMyInput = false
-                        var senderAddr = ""
-                        var recipientAddr = ""
+                            var totalInputAmount = 0L
+                            var totalOutputToMe = 0L
+                            var totalOutputOther = 0L
+                            var hasMyInput = false
+                            var senderAddr = ""
+                            var recipientAddr = ""
 
-                        if (inputs != null) {
-                            for (k in 0 until inputs.length()) {
-                                val inObj = inputs.getJSONObject(k)
-                                val prevOut = inObj.optJSONObject("previous_outpoint_address")
-                                val inputAddr = prevOut?.optString("address", "") ?: inObj.optString("previous_outpoint_address", "")
-                                val inAmount = inObj.optLong("previous_outpoint_amount", 0L)
-                                totalInputAmount += inAmount
-                                if (inputAddr == address) {
-                                    hasMyInput = true
-                                }
-                                if (senderAddr.isEmpty() && inputAddr.isNotEmpty()) {
-                                    senderAddr = inputAddr
-                                }
-                            }
-                        }
-
-                        if (outputs != null) {
-                            for (j in 0 until outputs.length()) {
-                                val out = outputs.getJSONObject(j)
-                                val outAddr = out.optString("script_public_key_address", "")
-                                val outAmount = out.optLong("amount", 0L)
-                                if (outAddr == address) {
-                                    totalOutputToMe += outAmount
-                                } else {
-                                    totalOutputOther += outAmount
-                                    if (recipientAddr.isEmpty() && outAddr.isNotEmpty()) recipientAddr = outAddr
+                            if (inputs != null) {
+                                for (k in 0 until inputs.length()) {
+                                    val inObj = inputs.getJSONObject(k)
+                                    val prevOut = inObj.optJSONObject("previous_outpoint_address")
+                                    val inputAddr = prevOut?.optString("address", "") ?: inObj.optString("previous_outpoint_address", "")
+                                    val inAmount = inObj.optLong("previous_outpoint_amount", 0L)
+                                    totalInputAmount += inAmount
+                                    if (inputAddr == address) {
+                                        hasMyInput = true
+                                    }
+                                    if (senderAddr.isEmpty() && inputAddr.isNotEmpty()) {
+                                        senderAddr = inputAddr
+                                    }
                                 }
                             }
-                        }
 
-                        val isIncoming = !hasMyInput && totalOutputToMe > 0
-                        val isCompound = hasMyInput && totalOutputOther == 0L && totalOutputToMe > 0
+                            if (outputs != null) {
+                                for (j in 0 until outputs.length()) {
+                                    val out = outputs.getJSONObject(j)
+                                    val outAddr = out.optString("script_public_key_address", "")
+                                    val outAmount = out.optLong("amount", 0L)
+                                    if (outAddr == address) {
+                                        totalOutputToMe += outAmount
+                                    } else {
+                                        totalOutputOther += outAmount
+                                        if (recipientAddr.isEmpty() && outAddr.isNotEmpty()) recipientAddr = outAddr
+                                    }
+                                }
+                            }
 
-                        val txType = when {
-                            isCompound -> TransactionType.COMPOUND
-                            isIncoming -> TransactionType.RECEIVE
-                            else -> TransactionType.SEND
-                        }
+                            val isIncoming = !hasMyInput && totalOutputToMe > 0
+                            val isCompound = hasMyInput && totalOutputOther == 0L && totalOutputToMe > 0
 
-                        val finalAmount = when {
-                            isCompound -> totalOutputToMe
-                            isIncoming -> totalOutputToMe
-                            else -> totalOutputOther
-                        }
+                            val txType = when {
+                                isCompound -> TransactionType.COMPOUND
+                                isIncoming -> TransactionType.RECEIVE
+                                else -> TransactionType.SEND
+                            }
 
-                        val calculatedFee = if (rawFee > 0) rawFee else if (totalInputAmount > 0 && (totalOutputToMe + totalOutputOther) > 0) {
-                            maxOf(0L, totalInputAmount - (totalOutputToMe + totalOutputOther))
-                        } else {
-                            KaspaUtils.DEFAULT_MIN_FEE_SOMPI
-                        }
+                            val finalAmount = when {
+                                isCompound -> totalOutputToMe
+                                isIncoming -> totalOutputToMe
+                                else -> totalOutputOther
+                            }
 
-                        result.add(
-                            TransactionEntity(
-                                id = txId,
-                                walletId = walletId,
-                                accountId = accountId,
-                                txType = txType,
-                                amountSompi = finalAmount,
-                                feeSompi = calculatedFee,
-                                senderAddress = if (senderAddr.isNotEmpty()) senderAddr else address,
-                                recipientAddress = if (recipientAddr.isNotEmpty()) recipientAddr else address,
-                                timestamp = timestamp,
-                                daaScore = daaScore,
-                                status = TransactionStatus.CONFIRMED,
-                                note = if (rawMass > 0) "Mass: $rawMass grams" else ""
+                            val calculatedFee = if (rawFee > 0) rawFee else if (totalInputAmount > 0 && (totalOutputToMe + totalOutputOther) > 0) {
+                                maxOf(0L, totalInputAmount - (totalOutputToMe + totalOutputOther))
+                            } else {
+                                KaspaUtils.DEFAULT_MIN_FEE_SOMPI
+                            }
+
+                            result.add(
+                                TransactionEntity(
+                                    id = txId,
+                                    walletId = walletId,
+                                    accountId = accountId,
+                                    txType = txType,
+                                    amountSompi = finalAmount,
+                                    feeSompi = calculatedFee,
+                                    senderAddress = if (senderAddr.isNotEmpty()) senderAddr else address,
+                                    recipientAddress = if (recipientAddr.isNotEmpty()) recipientAddr else address,
+                                    timestamp = timestamp,
+                                    daaScore = daaScore,
+                                    status = TransactionStatus.CONFIRMED,
+                                    note = if (rawMass > 0) "Mass: $rawMass grams" else ""
+                                )
                             )
-                        )
+                        }
+                        return@withContext result
                     }
                 }
+            } catch (e: Exception) {
+                Log.d("KaspaApiClient", "Transactions check candidate $baseUrl unfulfilled for $address: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w("KaspaApiClient", "Transactions check unfulfilled for $address: ${e.message}")
         }
         result
     }

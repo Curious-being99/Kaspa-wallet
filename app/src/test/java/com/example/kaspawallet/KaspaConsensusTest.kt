@@ -107,4 +107,90 @@ class KaspaConsensusTest {
         org.junit.Assert.assertFalse(com.example.kaspawallet.ui.components.isKaspaAddressOrUri("bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"))
         org.junit.Assert.assertFalse(com.example.kaspawallet.ui.components.isKaspaAddressOrUri("WIFI:S:MyNetwork;T:WPA;P:secret;;"))
     }
+
+    @Test
+    fun testDerivePathsAndMultiInputSigning() {
+        val mnemonic = listOf(
+            "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+            "abandon", "abandon", "abandon", "abandon", "abandon", "about"
+        )
+        val seed = com.example.kaspawallet.data.crypto.KaspaCrypto.mnemonicToSeed(mnemonic)
+
+        // 1. Verify that all 30 receive paths and 30 change paths derive unique valid addresses
+        val receiveAddresses = (0 until 30).map { idx ->
+            KaspaSigner.deriveKaspaAddressFromSeed(seed, accountIndex = 0, branch = 0, addressIndex = idx)
+        }
+        val changeAddresses = (0 until 30).map { idx ->
+            KaspaSigner.deriveKaspaAddressFromSeed(seed, accountIndex = 0, branch = 1, addressIndex = idx)
+        }
+
+        assertEquals(30, receiveAddresses.distinct().size)
+        assertEquals(30, changeAddresses.distinct().size)
+        assertTrue(receiveAddresses.all { it.startsWith("kaspa:q") })
+        assertTrue(changeAddresses.all { it.startsWith("kaspa:q") })
+
+        // 2. Build multi-input transaction with inputs from different receive & change paths
+        // Input 0: Receive path m/44'/111111'/0'/0/1
+        val privKeyRec1 = KaspaSigner.derivePrivateKey(seed, 0, branch = 0, addressIndex = 1)
+        val pubKeyRec1 = KaspaSigner.derivePublicKey(privKeyRec1)
+        val scriptRec1 = "20" + KaspaSigner.byteArrayToHexString(pubKeyRec1) + "ac"
+
+        // Input 1: Change path m/44'/111111'/0'/1/5
+        val privKeyChg5 = KaspaSigner.derivePrivateKey(seed, 0, branch = 1, addressIndex = 5)
+        val pubKeyChg5 = KaspaSigner.derivePublicKey(privKeyChg5)
+        val scriptChg5 = "20" + KaspaSigner.byteArrayToHexString(pubKeyChg5) + "ac"
+
+        val inputs = listOf(
+            UtxoEntry("11".repeat(32), 0, 500000000L, scriptRec1, 1000L),
+            UtxoEntry("22".repeat(32), 1, 300000000L, scriptChg5, 1001L)
+        )
+
+        val (txJson, txId) = KaspaSigner.createAndSignTransaction(
+            seed = seed,
+            accountIndex = 0,
+            inputs = inputs,
+            recipientAddress = receiveAddresses[0],
+            amountSompi = 700000000L,
+            feeSompi = 10000L,
+            changeAddress = changeAddresses[0],
+            network = com.example.kaspawallet.data.model.KaspaNetwork.MAINNET
+        )
+
+        assertTrue(txJson.isNotEmpty())
+        assertEquals(64, txId.length)
+
+        // Verify signatures in the generated JSON
+        val parsed = org.json.JSONObject(txJson)
+        val parsedInputs = parsed.getJSONObject("transaction").getJSONArray("inputs")
+        assertEquals(2, parsedInputs.length())
+
+        val sigScript0Hex = parsedInputs.getJSONObject(0).getString("signatureScript")
+        val sig0Bytes = hexStringToByteArray(sigScript0Hex.substring(2, 130)) // extract 64 bytes
+        val sighash0 = KaspaSigner.computeKaspaSighash(0, inputs, listOf(
+            Pair(700000000L, KaspaSigner.addressToScriptPublicKey(receiveAddresses[0])),
+            Pair(99990000L, KaspaSigner.addressToScriptPublicKey(changeAddresses[0]))
+        ), 0)
+        val sig0Valid = KaspaSigner.verifySchnorr(pubKeyRec1, sighash0, sig0Bytes)
+        assertTrue("Input 0 signed with receive path key must verify", sig0Valid)
+
+        val sigScript1Hex = parsedInputs.getJSONObject(1).getString("signatureScript")
+        val sig1Bytes = hexStringToByteArray(sigScript1Hex.substring(2, 130))
+        val sighash1 = KaspaSigner.computeKaspaSighash(0, inputs, listOf(
+            Pair(700000000L, KaspaSigner.addressToScriptPublicKey(receiveAddresses[0])),
+            Pair(99990000L, KaspaSigner.addressToScriptPublicKey(changeAddresses[0]))
+        ), 1)
+        val sig1Valid = KaspaSigner.verifySchnorr(pubKeyChg5, sighash1, sig1Bytes)
+        assertTrue("Input 1 signed with change path key must verify", sig1Valid)
+    }
+
+    private fun hexStringToByteArray(s: String): ByteArray {
+        val len = s.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(s[i], 16) shl 4) + Character.digit(s[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
+    }
 }

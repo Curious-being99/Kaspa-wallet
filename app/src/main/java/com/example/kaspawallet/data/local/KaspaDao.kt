@@ -9,6 +9,9 @@ interface WalletDao {
     @Query("SELECT * FROM wallets ORDER BY createdAt DESC")
     fun getAllWallets(): Flow<List<WalletEntity>>
 
+    @Query("SELECT * FROM wallets")
+    fun getAllWalletsSync(): List<WalletEntity>
+
     @Query("SELECT * FROM wallets WHERE id = :walletId LIMIT 1")
     fun getWalletById(walletId: String): WalletEntity?
 
@@ -26,6 +29,9 @@ interface WalletDao {
 interface AccountDao {
     @Query("SELECT * FROM accounts WHERE walletId = :walletId ORDER BY accountIndex ASC")
     fun getAccountsForWallet(walletId: String): Flow<List<AccountEntity>>
+
+    @Query("SELECT * FROM accounts WHERE walletId = :walletId ORDER BY accountIndex ASC")
+    fun getAccountsForWalletSync(walletId: String): List<AccountEntity>
 
     @Query("SELECT * FROM accounts WHERE id = :accountId LIMIT 1")
     fun getAccountById(accountId: String): AccountEntity?

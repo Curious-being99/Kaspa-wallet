@@ -431,8 +431,45 @@ object KaspaSigner {
     }
 
     /**
+     * Derives all private keys for an account across Receive (branch 0) and Change (branch 1)
+     * for indices 0 until gapLimit (default 30).
+     * Returns a map associating scriptPublicKey Hex, raw pubKey Hex, and Kaspa Address to the corresponding private key.
+     */
+    fun deriveAccountKeyMap(
+        seed: ByteArray,
+        accountIndex: Int = 0,
+        gapLimit: Int = 30,
+        network: KaspaNetwork = KaspaNetwork.MAINNET
+    ): Map<String, ByteArray> {
+        val keyMap = mutableMapOf<String, ByteArray>()
+        val prefix = when (network) {
+            KaspaNetwork.MAINNET -> "kaspa"
+            KaspaNetwork.TESTNET_10, KaspaNetwork.TESTNET_11 -> "kaspatest"
+            KaspaNetwork.DEVNET -> "kaspadev"
+            KaspaNetwork.SIMNET -> "kaspasim"
+        }
+
+        for (branch in 0..1) {
+            for (idx in 0 until gapLimit) {
+                val privKey = derivePrivateKey(seed, accountIndex, branch, idx)
+                val pubKey = derivePublicKey(privKey)
+                val pubHex = byteArrayToHexString(pubKey).lowercase()
+                val scriptPubKey = "20${pubHex}ac"
+                val address = KaspaCrypto.encodeKaspaAddress(prefix, 0.toByte(), pubKey).lowercase()
+
+                keyMap[scriptPubKey] = privKey
+                keyMap[pubHex] = privKey
+                keyMap[address] = privKey
+            }
+        }
+        return keyMap
+    }
+
+    /**
      * Builds and cryptographically signs a complete Kaspa Transaction
-     * Returns the RPC transaction JSON string and the authentic Transaction ID
+     * Each input is automatically matched and signed with its exact private key derived from
+     * m/44'/111111'/accountIndex'/0/0..29 or m/44'/111111'/accountIndex'/1/0..29.
+     * Returns the RPC transaction JSON string and the authentic Transaction ID.
      */
     fun createAndSignTransaction(
         seed: ByteArray,
@@ -446,7 +483,9 @@ object KaspaSigner {
         inputBranch: Int = 0,
         inputAddressIndex: Int = 0
     ): Pair<String, String> {
-        val privKey = derivePrivateKey(seed, accountIndex, branch = inputBranch, addressIndex = inputAddressIndex)
+        // Pre-derive all 60 signing keys (30 receive + 30 change) for flawless multi-input signing
+        val accountKeyMap = deriveAccountKeyMap(seed, accountIndex, gapLimit = 30, network = network)
+        val defaultPrivKey = derivePrivateKey(seed, accountIndex, branch = inputBranch, addressIndex = inputAddressIndex)
         val totalInputAmount = inputs.sumOf { it.amountSompi }
         val changeAmount = totalInputAmount - amountSompi - feeSompi
 
@@ -467,6 +506,12 @@ object KaspaSigner {
         val jsonInputs = JSONArray()
         for (i in inputs.indices) {
             val utxo = inputs[i]
+            val cleanScript = utxo.scriptPublicKey.lowercase().trim()
+            // Find the exact private key for this UTXO from receive (0/0..29) or change (1/0..29)
+            val privKey = accountKeyMap[cleanScript]
+                ?: accountKeyMap[cleanScript.removePrefix("20").removeSuffix("ac")]
+                ?: defaultPrivKey
+
             // Compute real Kaspa consensus Blake2b sighash
             val sighash = computeKaspaSighash(
                 txVersion = 0,
