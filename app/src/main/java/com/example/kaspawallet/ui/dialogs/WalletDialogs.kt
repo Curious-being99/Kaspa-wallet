@@ -843,41 +843,73 @@ fun ReceiveKasDialog(
                         }
                     }
 
-                    // Index Stepper
-                    Row(
+                    // Index Stepper with 30 Limit (0..29)
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(KaspaSurfaceVariant, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            "Address Index #$addressIndex",
-                            color = KaspaTextPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = { if (addressIndex > 0) addressIndex-- },
-                                enabled = addressIndex > 0,
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(Icons.Default.Remove, contentDescription = "Prev Index", tint = if (addressIndex > 0) KaspaPrimary else KaspaTextMuted, modifier = Modifier.size(16.dp))
-                            }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                "$addressIndex",
-                                color = KaspaPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp)
+                                "Address Index: #$addressIndex (Limit: 30 addresses)",
+                                color = KaspaTextPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
-                            IconButton(
-                                onClick = { addressIndex++ },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = "Next Index", tint = KaspaPrimary, modifier = Modifier.size(16.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = { if (addressIndex > 0) addressIndex-- },
+                                    enabled = addressIndex > 0,
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Default.Remove, contentDescription = "Prev Index", tint = if (addressIndex > 0) KaspaPrimary else KaspaTextMuted, modifier = Modifier.size(16.dp))
+                                }
+                                Text(
+                                    "$addressIndex",
+                                    color = KaspaPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                )
+                                IconButton(
+                                    onClick = { if (addressIndex < 29) addressIndex++ },
+                                    enabled = addressIndex < 29,
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Next Index", tint = if (addressIndex < 29) KaspaPrimary else KaspaTextMuted, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+
+                        // Quick Index Chips (0, 1, 2, 5, 10, 20, 29)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf(0, 1, 2, 5, 10, 20, 29).forEach { idx ->
+                                val isSelected = addressIndex == idx
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSelected) KaspaPrimary else KaspaSurface)
+                                        .clickable { addressIndex = idx }
+                                        .padding(vertical = 4.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "#$idx",
+                                        color = if (isSelected) Color(0xFF003731) else KaspaTextSecondary,
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
                             }
                         }
                     }

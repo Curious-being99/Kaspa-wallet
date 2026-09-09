@@ -110,6 +110,60 @@ class KaspaWalletRepository(
                 database.transactionDao().insertTransaction(tx)
             }
         }
+
+        // 4. Auto-recover / sweep any funds sitting on secondary address indices (e.g. branch 0 index 1..4 or branch 1 index 0..4)
+        try {
+            val wallet = database.walletDao().getWalletById(account.walletId)
+            val words = wallet?.encryptedMnemonic?.split(" ") ?: emptyList()
+            if (words.size in listOf(12, 24)) {
+                val seed = KaspaCrypto.mnemonicToSeed(words)
+                
+                // Scan up to 30 address gap limit across receive (branch 0) and change (branch 1) chains
+                val gapLimit = 30
+                val branchesToScan = listOf(
+                    0 to (1 until gapLimit).toList(), // m/44'/111111'/0'/0/1..29
+                    1 to (0 until gapLimit).toList()  // m/44'/111111'/0'/1/0..29
+                )
+
+                for ((branch, indices) in branchesToScan) {
+                    for (addrIdx in indices) {
+                        val derivedAddr = if (branch == 0) {
+                            KaspaCrypto.deriveKaspaAddress(words, account.accountIndex, addrIdx, network)
+                        } else {
+                            KaspaCrypto.deriveKaspaChangeAddress(words, account.accountIndex, addrIdx, network)
+                        }
+
+                        if (derivedAddr.isNotBlank() && derivedAddr != account.address) {
+                            val utxos = apiClient.fetchAddressUtxos(derivedAddr, network)
+                            val totalSompi = utxos.sumOf { it.amountSompi }
+                            val mass = KaspaSigner.calculateTransactionMass(utxos.size, 1)
+                            val feeSompi = KaspaSigner.calculateMinimumFeeSompi(mass)
+                            if (totalSompi > feeSompi) {
+                                val sweepAmount = totalSompi - feeSompi
+                                val (signedSweepTx, sweepTxId) = KaspaSigner.createAndSignTransaction(
+                                    seed = seed,
+                                    accountIndex = account.accountIndex,
+                                    inputs = utxos,
+                                    recipientAddress = account.address,
+                                    amountSompi = sweepAmount,
+                                    feeSompi = feeSompi,
+                                    changeAddress = account.address,
+                                    network = network,
+                                    inputBranch = branch,
+                                    inputAddressIndex = addrIdx
+                                )
+                                val (sweepOk, _) = apiClient.broadcastTransaction(signedSweepTx, network)
+                                if (sweepOk) {
+                                    Log.i("KaspaWalletRepository", "Swept funds from $derivedAddr (branch $branch idx $addrIdx) to primary: $sweepTxId")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.d("KaspaWalletRepository", "Multi-index auto-recovery check: ${e.message}")
+        }
     }
 
     fun getAccountsForWallet(walletId: String): Flow<List<AccountEntity>> {
@@ -295,17 +349,9 @@ class KaspaWalletRepository(
         val words = wallet?.encryptedMnemonic?.split(" ") ?: emptyList()
         val seed = if (words.isNotEmpty()) KaspaCrypto.mnemonicToSeed(words) else ByteArray(64)
 
-        // Derive authentic change address (branch = 1 / internal chain) matching Kaspa wallet origin logic
-        val changeAddress = if (words.isNotEmpty()) {
-            KaspaCrypto.deriveKaspaChangeAddress(
-                mnemonic = words,
-                accountIndex = senderAccount.accountIndex,
-                addressIndex = 0,
-                network = _currentNetwork.value
-            )
-        } else {
-            senderAccount.address
-        }
+        // Change output returns directly to the sender's account address
+        // This ensures the sender's account only has (amountSompi + feeSompi) deducted, and the remaining change stays in the account balance
+        val changeAddress = senderAccount.address
 
         val accountUtxosList = _accountUtxos.value[senderAccount.id] ?: emptyList()
         // If cached UTXOs are empty or sum is insufficient, fetch live from Kaspa network
@@ -367,6 +413,26 @@ class KaspaWalletRepository(
         database.accountDao().updateBalance(senderAccount.id, newSenderBalance)
 
         val currentDaa = _blockDagInfo.value.virtualDaaScore + 1
+
+        // Update local UTXOs immediately: remove spent inputs and add change UTXO if any
+        val totalInput = selectedUtxos.sumOf { it.amountSompi }
+        val changeAmount = totalInput - totalDebit
+        val updatedUtxos = availableUtxos.filterNot { selectedUtxos.contains(it) }.toMutableList()
+        if (changeAmount > 0) {
+            updatedUtxos.add(
+                UtxoEntry(
+                    outpointTxId = finalTxId,
+                    outpointIndex = 1,
+                    amountSompi = changeAmount,
+                    scriptPublicKey = KaspaCrypto.decodeAddressToScriptPublicKey(senderAccount.address),
+                    blockDaaScore = currentDaa,
+                    isCoinbase = false
+                )
+            )
+        }
+        _accountUtxos.update { current ->
+            current + (senderAccount.id to updatedUtxos)
+        }
 
         val tx = TransactionEntity(
             id = finalTxId,

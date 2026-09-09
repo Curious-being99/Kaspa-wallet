@@ -3,6 +3,7 @@ package com.example.kaspawallet.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.kaspawallet.data.crypto.KaspaCrypto
 import com.example.kaspawallet.data.crypto.KaspaUtils
 import com.example.kaspawallet.data.model.*
 import com.example.kaspawallet.data.repository.KaspaWalletRepository
@@ -400,47 +401,69 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                     )
                 }
 
-                // Stage 3: Scanning UTXOs on-chain
+                // Stage 3: Scanning UTXOs on-chain across receive and change derivation paths (Gap Limit: 30)
                 _scanIndexingState.update {
                     it.copy(
                         stage = ScanIndexingStage.SCANNING_UTXOS,
                         progress = 0.72f,
-                        statusMessage = "Querying live unspent outputs (UTXO set)..."
+                        statusMessage = "Querying live unspent outputs across 30 address indices..."
                     )
                 }
-                val liveUtxos = try {
-                    repository.apiClient.fetchAddressUtxos(targetAddress, network)
-                } catch (e: Exception) {
-                    emptyList()
+                val gapLimit = 30
+                val addressesToScan = mutableListOf<String>()
+                for (idx in 0 until gapLimit) {
+                    try {
+                        val recAddr = KaspaCrypto.deriveKaspaAddress(words, accountIndex = 0, addressIndex = idx, network = network)
+                        if (recAddr.isNotBlank()) addressesToScan.add(recAddr)
+                    } catch (_: Exception) {}
+                    try {
+                        val chgAddr = KaspaCrypto.deriveKaspaChangeAddress(words, accountIndex = 0, addressIndex = idx, network = network)
+                        if (chgAddr.isNotBlank()) addressesToScan.add(chgAddr)
+                    } catch (_: Exception) {}
                 }
+                val uniqueAddresses = addressesToScan.distinct()
+
+                val discoveredUtxos = mutableListOf<UtxoEntry>()
+                for (addr in uniqueAddresses) {
+                    try {
+                        val utxos = repository.apiClient.fetchAddressUtxos(addr, network)
+                        if (utxos.isNotEmpty()) {
+                            discoveredUtxos.addAll(utxos)
+                        }
+                    } catch (_: Exception) {}
+                }
+
                 kotlinx.coroutines.delay(600)
                 _scanIndexingState.update {
                     it.copy(
-                        utxoCount = liveUtxos.size,
+                        utxoCount = discoveredUtxos.size,
                         progress = 0.82f,
-                        statusMessage = if (liveUtxos.isNotEmpty()) "${liveUtxos.size} UTXOs discovered on-chain" else "Zero unspent UTXOs (Clean graph)"
+                        statusMessage = if (discoveredUtxos.isNotEmpty()) "${discoveredUtxos.size} UTXOs discovered on-chain (30 address limit)" else "Zero unspent UTXOs (Clean graph)"
                     )
                 }
 
-                // Stage 4: Calculating On-Chain Consensus Balance
+                // Stage 4: Calculating On-Chain Consensus Balance across 30 address limit
                 _scanIndexingState.update {
                     it.copy(
                         stage = ScanIndexingStage.CALCULATING_BALANCE,
                         progress = 0.90f,
-                        statusMessage = "Calculating confirmed on-chain balance..."
+                        statusMessage = "Calculating confirmed on-chain balance (30 address limit)..."
                     )
                 }
-                val liveBalanceSompi = try {
-                    repository.apiClient.fetchAddressBalance(targetAddress, network)
-                } catch (e: Exception) {
-                    0L
+                var totalDiscoveredBalanceSompi = 0L
+                for (addr in uniqueAddresses) {
+                    try {
+                        val bal = repository.apiClient.fetchAddressBalance(addr, network)
+                        totalDiscoveredBalanceSompi += bal
+                    } catch (_: Exception) {}
                 }
+
                 kotlinx.coroutines.delay(600)
                 _scanIndexingState.update {
                     it.copy(
-                        balanceSompi = liveBalanceSompi,
+                        balanceSompi = totalDiscoveredBalanceSompi,
                         progress = 0.94f,
-                        statusMessage = "Balance verified: ${KaspaUtils.formatKas(KaspaUtils.sompiToKas(liveBalanceSompi))} KAS"
+                        statusMessage = "Balance verified: ${KaspaUtils.formatKas(KaspaUtils.sompiToKas(totalDiscoveredBalanceSompi))} KAS"
                     )
                 }
 
@@ -460,11 +483,20 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 )
                 saveWalletPassword(context, wallet.id, password)
 
-                val txs = try {
-                    repository.apiClient.fetchAddressTransactions(targetAddress, wallet.id, account.id, network)
-                } catch (e: Exception) {
-                    emptyList()
+                // Sync on-chain balance & auto-sweep any legacy change to main account
+                repository.syncAccountOnChain(account.id)
+
+                val allTxsList = mutableListOf<TransactionEntity>()
+                for (addr in uniqueAddresses) {
+                    try {
+                        val txs = repository.apiClient.fetchAddressTransactions(addr, wallet.id, account.id, network)
+                        allTxsList.addAll(txs)
+                    } catch (_: Exception) {}
                 }
+                val allTxs = allTxsList.distinctBy { it.id }
+
+                // Fetch final synced account for state
+                val syncedAccount = repository.database.accountDao().getAccountById(account.id) ?: account
 
                 // Stage 6: Complete
                 kotlinx.coroutines.delay(600)
@@ -474,8 +506,9 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                         progress = 1.0f,
                         isComplete = true,
                         isScanning = false,
-                        txCount = txs.size,
-                        indexedTransactions = txs,
+                        balanceSompi = syncedAccount.balanceSompi.coerceAtLeast(totalDiscoveredBalanceSompi),
+                        txCount = allTxs.size,
+                        indexedTransactions = allTxs,
                         statusMessage = "On-chain scanning & indexing complete!"
                     )
                 }
@@ -485,7 +518,7 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                     current.copy(
                         wallets = updatedWallets,
                         activeWallet = wallet,
-                        activeAccount = account
+                        activeAccount = syncedAccount
                     )
                 }
             } catch (e: Exception) {

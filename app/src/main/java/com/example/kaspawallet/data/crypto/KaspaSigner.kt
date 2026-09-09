@@ -442,9 +442,11 @@ object KaspaSigner {
         amountSompi: Long,
         feeSompi: Long,
         changeAddress: String,
-        network: KaspaNetwork
+        network: KaspaNetwork,
+        inputBranch: Int = 0,
+        inputAddressIndex: Int = 0
     ): Pair<String, String> {
-        val privKey = derivePrivateKey(seed, accountIndex, 0)
+        val privKey = derivePrivateKey(seed, accountIndex, branch = inputBranch, addressIndex = inputAddressIndex)
         val totalInputAmount = inputs.sumOf { it.amountSompi }
         val changeAmount = totalInputAmount - amountSompi - feeSompi
 
