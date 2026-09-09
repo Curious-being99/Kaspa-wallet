@@ -90,17 +90,23 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
     val scanIndexingState: StateFlow<ScanIndexingUiState> = _scanIndexingState.asStateFlow()
 
     private var isInitialWalletLoad = true
+    private var accountsJob: kotlinx.coroutines.Job? = null
+    private var transactionsJob: kotlinx.coroutines.Job? = null
+    private var utxosJob: kotlinx.coroutines.Job? = null
+    private var lastObservedWalletId: String? = null
 
     init {
         // Collect wallets
         viewModelScope.launch {
             repository.allWallets.collect { walletList ->
+                var currentActiveWalletId: String? = null
                 _uiState.update { current ->
                     val active = if (current.activeWallet != null) {
-                        walletList.find { it.id == current.activeWallet.id }
+                        walletList.find { it.id == current.activeWallet.id } ?: walletList.firstOrNull()
                     } else {
                         walletList.firstOrNull()
                     }
+                    currentActiveWalletId = active?.id
                     val shouldLock = isInitialWalletLoad && walletList.isNotEmpty()
                     if (isInitialWalletLoad) {
                         isInitialWalletLoad = false
@@ -111,9 +117,11 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                         isWalletLocked = if (shouldLock) true else current.isWalletLocked
                     )
                 }
-                _uiState.value.activeWallet?.let {
-                    repository.setActiveWallet(it.id)
-                    observeAccountsAndTransactions(it.id)
+                currentActiveWalletId?.let { wId ->
+                    if (lastObservedWalletId != wId) {
+                        repository.setActiveWallet(wId)
+                        observeAccountsAndTransactions(wId)
+                    }
                 }
             }
         }
@@ -204,27 +212,32 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
     }
 
     private fun observeAccountsAndTransactions(walletId: String) {
-        viewModelScope.launch {
+        lastObservedWalletId = walletId
+        accountsJob?.cancel()
+        transactionsJob?.cancel()
+
+        accountsJob = viewModelScope.launch {
             repository.getAccountsForWallet(walletId).collect { accountList ->
+                var selectedAccount: AccountEntity? = null
                 _uiState.update { current ->
                     val activeAcc = if (current.activeAccount != null) {
                         accountList.find { it.id == current.activeAccount.id } ?: accountList.firstOrNull()
                     } else {
                         accountList.firstOrNull()
                     }
+                    selectedAccount = activeAcc
                     current.copy(
                         accounts = accountList,
                         activeAccount = activeAcc
                     )
                 }
-                _uiState.value.activeAccount?.let {
-                    repository.setActiveAccount(it.id)
-                    updateAccountUtxos(it.id)
+                selectedAccount?.let { acc ->
+                    updateAccountUtxos(acc.id)
                 }
             }
         }
 
-        viewModelScope.launch {
+        transactionsJob = viewModelScope.launch {
             repository.getTransactionsForWallet(walletId).collect { txList ->
                 _uiState.update { it.copy(transactions = txList) }
             }
@@ -232,7 +245,8 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
     }
 
     private fun updateAccountUtxos(accountId: String) {
-        viewModelScope.launch {
+        utxosJob?.cancel()
+        utxosJob = viewModelScope.launch {
             repository.accountUtxos.collect { map ->
                 val list = map[accountId] ?: emptyList()
                 _uiState.update { it.copy(utxos = list) }

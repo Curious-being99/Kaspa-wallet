@@ -170,10 +170,8 @@ class KaspaWalletRepository(
 
         // 4. Update confirmed balance and UTXO pool
         val effectiveCalculatedBalance = maxOf(primaryBal, allDiscoveredUtxos.sumOf { it.amountSompi })
-        if (effectiveCalculatedBalance > 0 || primaryBal > 0 || (primaryUtxos.isEmpty() && account.balanceSompi == 0L)) {
-            val finalBalance = maxOf(effectiveCalculatedBalance, primaryBal)
-            database.accountDao().updateBalance(accountId, finalBalance)
-        }
+        val finalBalance = maxOf(effectiveCalculatedBalance, primaryBal)
+        database.accountDao().updateBalance(accountId, finalBalance)
         _accountUtxos.update { current ->
             current + (accountId to allDiscoveredUtxos.distinctBy { "${it.outpointTxId}:${it.outpointIndex}" })
         }
