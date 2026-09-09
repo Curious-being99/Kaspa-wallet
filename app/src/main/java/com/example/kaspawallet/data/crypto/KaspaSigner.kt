@@ -564,7 +564,7 @@ object KaspaSigner {
         txInner.put("mass", consensusMass)
 
         jsonTx.put("transaction", txInner)
-        jsonTx.put("allowOrphan", false)
+        jsonTx.put("allowOrphan", true)
 
         // Calculate authentic Kaspa Transaction ID
         val txId = computeTransactionId(
