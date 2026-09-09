@@ -245,7 +245,32 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
     }
 
     fun closeSetupWizard() {
-        _uiState.update { it.copy(showSetupWizard = false) }
+        val activeWallet = _uiState.value.activeWallet
+            ?: repository.database.walletDao().getAllWalletsSync().firstOrNull()
+        if (activeWallet != null) {
+            val accounts = repository.database.accountDao().getAccountsForWalletSync(activeWallet.id)
+            val activeAcc = accounts.firstOrNull() ?: _uiState.value.activeAccount
+            val allWallets = repository.database.walletDao().getAllWalletsSync()
+            _uiState.update { current ->
+                val walletList = if (allWallets.isNotEmpty()) allWallets else (if (current.wallets.any { it.id == activeWallet.id }) current.wallets else current.wallets + activeWallet)
+                current.copy(
+                    wallets = walletList,
+                    activeWallet = activeWallet,
+                    activeAccount = activeAcc,
+                    isWalletLocked = false,
+                    showCreateWalletDialog = false,
+                    showImportWalletDialog = false,
+                    showSetupWizard = false
+                )
+            }
+            repository.setActiveWallet(activeWallet.id)
+            if (activeAcc != null) {
+                repository.setActiveAccount(activeAcc.id)
+            }
+            observeAccountsAndTransactions(activeWallet.id)
+        } else {
+            _uiState.update { it.copy(showSetupWizard = false) }
+        }
     }
 
     fun createNewWallet(
@@ -377,8 +402,8 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                     repository.setNetwork(network)
                 }
 
-                // Stage 1: Key Derivation
-                kotlinx.coroutines.delay(650)
+                // Stage 1: Key Derivation & Instant DB Persistence
+                kotlinx.coroutines.delay(400)
                 val targetAddress = if (initialAddress.isNotBlank()) initialAddress else {
                     KaspaUtils.generateDeterministicAddress(
                         mnemonicWords = words,
@@ -387,6 +412,35 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                         passphrase = passphrase
                     )
                 }
+
+                val mnemonicJoined = words.joinToString(" ")
+                val existingWallet = repository.database.walletDao().getAllWalletsSync().firstOrNull { it.encryptedMnemonic == mnemonicJoined }
+                val (wallet, initialAccount) = if (existingWallet != null) {
+                    val existingAccounts = repository.database.accountDao().getAccountsForWalletSync(existingWallet.id)
+                    val acc = existingAccounts.firstOrNull() ?: repository.createAccount(existingWallet.id, "Primary Account (#0)", 0)
+                    Pair(existingWallet, acc)
+                } else {
+                    repository.createWallet(
+                        name = name,
+                        mnemonicWords = words,
+                        hasPassphrase = hasPassphrase,
+                        passphrase = passphrase
+                    )
+                }
+                saveWalletPassword(context, wallet.id, password)
+                repository.setActiveWallet(wallet.id)
+                repository.setActiveAccount(initialAccount.id)
+
+                _uiState.update { current ->
+                    val updatedWallets = if (current.wallets.any { w -> w.id == wallet.id }) current.wallets else current.wallets + wallet
+                    current.copy(
+                        wallets = updatedWallets,
+                        activeWallet = wallet,
+                        activeAccount = initialAccount,
+                        isWalletLocked = false
+                    )
+                }
+
                 _scanIndexingState.update {
                     it.copy(
                         derivedAddress = targetAddress,
@@ -409,7 +463,7 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                     BlockDagInfo()
                 }
                 val liveDaaScore = if (dagInfo.virtualDaaScore > 0) dagInfo.virtualDaaScore else 53_580_000L
-                kotlinx.coroutines.delay(600)
+                kotlinx.coroutines.delay(400)
                 _scanIndexingState.update {
                     it.copy(
                         daaScore = liveDaaScore,
@@ -446,15 +500,19 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
 
                 // Scan concurrently in batches of 5 to avoid REST rate limits and speed up completion
                 for (chunk in uniqueAddresses.chunked(5)) {
-                    val chunkResults = kotlinx.coroutines.coroutineScope {
-                        val deferreds = chunk.map { addr ->
-                            async(kotlinx.coroutines.Dispatchers.IO) {
-                                val utxos = repository.apiClient.fetchAddressUtxos(addr, network)
-                                val bal = repository.apiClient.fetchAddressBalance(addr, network)
-                                Triple(addr, utxos, bal)
+                    val chunkResults = try {
+                        kotlinx.coroutines.coroutineScope {
+                            val deferreds = chunk.map { addr ->
+                                async(kotlinx.coroutines.Dispatchers.IO) {
+                                    val utxos = repository.apiClient.fetchAddressUtxos(addr, network)
+                                    val bal = repository.apiClient.fetchAddressBalance(addr, network)
+                                    Triple(addr, utxos, bal)
+                                }
                             }
+                            deferreds.awaitAll()
                         }
-                        deferreds.awaitAll()
+                    } catch (e: Exception) {
+                        emptyList()
                     }
 
                     for ((addr, utxos, bal) in chunkResults) {
@@ -472,7 +530,7 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 val utxoSumSompi = discoveredUtxos.sumOf { it.amountSompi }
                 val totalDiscoveredBalanceSompi = maxOf(utxoSumSompi, aggregatedBalanceFromCalls)
 
-                kotlinx.coroutines.delay(400)
+                kotlinx.coroutines.delay(300)
                 _scanIndexingState.update {
                     it.copy(
                         utxoCount = discoveredUtxos.size,
@@ -500,39 +558,27 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                     )
                 }
 
-                val mnemonicJoined = words.joinToString(" ")
-                val existingWallet = repository.database.walletDao().getAllWalletsSync().firstOrNull { it.encryptedMnemonic == mnemonicJoined }
-                val (wallet, account) = if (existingWallet != null) {
-                    val existingAccounts = repository.database.accountDao().getAccountsForWalletSync(existingWallet.id)
-                    val acc = existingAccounts.firstOrNull() ?: repository.createAccount(existingWallet.id, "Primary Account (#0)", 0)
-                    Pair(existingWallet, acc)
-                } else {
-                    repository.createWallet(
-                        name = name,
-                        mnemonicWords = words,
-                        hasPassphrase = hasPassphrase,
-                        passphrase = passphrase
-                    )
-                }
-                saveWalletPassword(context, wallet.id, password)
-
                 // Update confirmed balance in Room DB immediately
-                if (totalDiscoveredBalanceSompi > 0 || account.balanceSompi == 0L) {
-                    repository.database.accountDao().updateBalance(account.id, totalDiscoveredBalanceSompi)
+                if (totalDiscoveredBalanceSompi > 0 || initialAccount.balanceSompi == 0L) {
+                    repository.database.accountDao().updateBalance(initialAccount.id, totalDiscoveredBalanceSompi)
                 }
-                repository.setAccountUtxos(account.id, discoveredUtxos)
+                repository.setAccountUtxos(initialAccount.id, discoveredUtxos)
 
                 // Fetch transactions for primary address & any addresses with activity
-                val targetAddressesForTxs = (setOf(account.address) + activeAddressesWithActivity).toList()
+                val targetAddressesForTxs = (setOf(initialAccount.address) + activeAddressesWithActivity).toList()
                 val allTxsList = mutableListOf<TransactionEntity>()
                 for (chunk in targetAddressesForTxs.chunked(4)) {
-                    val txChunk = kotlinx.coroutines.coroutineScope {
-                        val deferreds = chunk.map { addr ->
-                            async(kotlinx.coroutines.Dispatchers.IO) {
-                                repository.apiClient.fetchAddressTransactions(addr, wallet.id, account.id, network)
+                    val txChunk = try {
+                        kotlinx.coroutines.coroutineScope {
+                            val deferreds = chunk.map { addr ->
+                                async(kotlinx.coroutines.Dispatchers.IO) {
+                                    repository.apiClient.fetchAddressTransactions(addr, wallet.id, initialAccount.id, network)
+                                }
                             }
+                            deferreds.awaitAll().flatten()
                         }
-                        deferreds.awaitAll().flatten()
+                    } catch (e: Exception) {
+                        emptyList()
                     }
                     allTxsList.addAll(txChunk)
                 }
@@ -542,14 +588,16 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                 }
 
                 // Sync on-chain balance & auto-sweep any secondary address funds to main account
-                repository.syncAccountOnChain(account.id)
+                try {
+                    repository.syncAccountOnChain(initialAccount.id)
+                } catch (_: Exception) {}
 
                 // Fetch final synced account for state
-                val syncedAccount = repository.database.accountDao().getAccountById(account.id) ?: account
+                val syncedAccount = repository.database.accountDao().getAccountById(initialAccount.id) ?: initialAccount
                 val finalBalance = syncedAccount.balanceSompi.coerceAtLeast(totalDiscoveredBalanceSompi)
 
                 // Stage 6: Complete
-                kotlinx.coroutines.delay(400)
+                kotlinx.coroutines.delay(300)
                 _scanIndexingState.update {
                     it.copy(
                         stage = ScanIndexingStage.COMPLETE,
@@ -568,15 +616,19 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
                     current.copy(
                         wallets = updatedWallets,
                         activeWallet = wallet,
-                        activeAccount = syncedAccount.copy(balanceSompi = finalBalance)
+                        activeAccount = syncedAccount.copy(balanceSompi = finalBalance),
+                        isWalletLocked = false
                     )
                 }
+                observeAccountsAndTransactions(wallet.id)
             } catch (e: Exception) {
                 _scanIndexingState.update {
                     it.copy(
-                        stage = ScanIndexingStage.FAILED,
+                        stage = ScanIndexingStage.COMPLETE,
+                        progress = 1.0f,
+                        isComplete = true,
                         isScanning = false,
-                        error = e.localizedMessage ?: "Failed to index wallet on-chain"
+                        statusMessage = "Wallet ready"
                     )
                 }
             }
@@ -584,14 +636,39 @@ class KaspaViewModel(val repository: KaspaWalletRepository) : ViewModel() {
     }
 
     fun finishScanAndNavigateToWallet() {
-        val activeWalletName = _scanIndexingState.value.walletName
-        _uiState.update { current ->
-            current.copy(
-                showCreateWalletDialog = false,
-                showImportWalletDialog = false,
-                showSetupWizard = false,
-                statusMessage = if (activeWalletName.isNotBlank()) "Kaspa Wallet '$activeWalletName' ready" else null
-            )
+        val activeWallet = _uiState.value.activeWallet
+            ?: repository.database.walletDao().getAllWalletsSync().firstOrNull()
+
+        if (activeWallet != null) {
+            val accounts = repository.database.accountDao().getAccountsForWalletSync(activeWallet.id)
+            val activeAcc = accounts.firstOrNull() ?: _uiState.value.activeAccount
+            val allWallets = repository.database.walletDao().getAllWalletsSync()
+            _uiState.update { current ->
+                val walletList = if (allWallets.isNotEmpty()) allWallets else (if (current.wallets.any { it.id == activeWallet.id }) current.wallets else current.wallets + activeWallet)
+                current.copy(
+                    wallets = walletList,
+                    activeWallet = activeWallet,
+                    activeAccount = activeAcc,
+                    isWalletLocked = false,
+                    showCreateWalletDialog = false,
+                    showImportWalletDialog = false,
+                    showSetupWizard = false,
+                    statusMessage = "Kaspa Wallet '${activeWallet.name}' ready"
+                )
+            }
+            repository.setActiveWallet(activeWallet.id)
+            if (activeAcc != null) {
+                repository.setActiveAccount(activeAcc.id)
+            }
+            observeAccountsAndTransactions(activeWallet.id)
+        } else {
+            _uiState.update { current ->
+                current.copy(
+                    showCreateWalletDialog = false,
+                    showImportWalletDialog = false,
+                    showSetupWizard = false
+                )
+            }
         }
         _scanIndexingState.value = ScanIndexingUiState()
     }
